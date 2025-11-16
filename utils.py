@@ -8,12 +8,11 @@ import pandas as pd
 import shutil
 
 import requests
-from keras.src.utils import to_categorical
+# from keras.src.utils import to_categorical
 from tabulate import tabulate
 import random
 from config import CLASS_NAMES
-import tensorflow as tf
-from tensorflow.keras import layers
+# import tensorflow as tf
 import numpy as np
 import os
 from tqdm import tqdm
@@ -21,6 +20,115 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc, roc_auc_score
 import seaborn as sns
 
+
+# ============================
+# YOLO AUG PIPELINE (AS REQUESTED)
+# ============================
+import albumentations as A
+
+yolo_aug = A.Compose([
+    A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=70, val_shift_limit=40, p=0.8),
+    A.ShiftScaleRotate(shift_limit=0.10, scale_limit=0.50, rotate_limit=0, border_mode=0, p=0.9),
+    A.Affine(shear=(-10, 10), p=0.7),
+    A.HorizontalFlip(p=1.0),
+    A.VerticalFlip(p=1.0),
+    A.Mosaic(p=1.0),
+    A.RandAugment(num_ops=2, magnitude=7, p=1.0),
+    A.CoarseDropout(max_holes=8, max_height=0.3, max_width=0.3, min_holes=1, p=0.4),
+])
+
+
+# ============================
+# CREATE BALANCED YOLO DATASET
+# ============================
+def create_yolo_balanced_dataset(
+    input_root,               # dataset format train/class/*.jpg
+    output_root,              # dataset baru
+    augmentations_per_image=1 # berapa augmentasi untuk oversampling
+):
+    os.makedirs(output_root, exist_ok=True)
+
+    splits = ["train", "val", "test"]
+    class_counts = {}
+
+    print("\n🔍 Menghitung jumlah dataset per class...")
+    # Hitung jumlah per kelas (di train saja)
+    train_path = os.path.join(input_root, "train")
+    for cls in os.listdir(train_path):
+        cls_dir = os.path.join(train_path, cls)
+        if not os.path.isdir(cls_dir):
+            continue
+        n = len([f for f in os.listdir(cls_dir) if f.lower().endswith((".jpg", ".png", ".jpeg"))])
+        class_counts[cls] = n
+
+    print("📊 Jumlah per class:", class_counts)
+
+    max_class = max(class_counts.values())  # target balance
+    print(f"\n🎯 Target per kelas (balanced 1:1): {max_class}")
+
+    # Process all splits
+    final_output_paths = {}
+
+    for split in splits:
+        src_split_dir = os.path.join(input_root, split)
+        dst_split_dir = os.path.join(output_root, split)
+        os.makedirs(dst_split_dir, exist_ok=True)
+
+        if split == "train":
+            print("\n🚀 Membuat TRAIN dataset balanced + augmentasi...")
+
+            for cls, n in class_counts.items():
+                src_cls_dir = os.path.join(src_split_dir, cls)
+                dst_cls_dir = os.path.join(dst_split_dir, cls)
+                os.makedirs(dst_cls_dir, exist_ok=True)
+
+                images = [f for f in os.listdir(src_cls_dir) if f.lower().endswith((".jpg",".png",".jpeg"))]
+
+                # Copy original images
+                for img_file in images:
+                    shutil.copy(os.path.join(src_cls_dir, img_file), os.path.join(dst_cls_dir, img_file))
+
+                # Hitung kebutuhan oversampling
+                need = max_class - n
+                if need <= 0:
+                    continue
+
+                print(f"  ➕ Oversampling class '{cls}' sebanyak {need} images")
+
+                for i in range(need):
+                    img_file = random.choice(images)
+                    img_path = os.path.join(src_cls_dir, img_file)
+
+                    img = cv2.imread(img_path)
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+                    # ----------------
+                    # APPLY AUGMENTATION (FULL PIPELINE)
+                    # ----------------
+                    aug = yolo_aug(image=img)['image']
+
+                    # save augment
+                    save_name = f"{os.path.splitext(img_file)[0]}_aug_{i}.jpg"
+                    save_path = os.path.join(dst_cls_dir, save_name)
+                    cv2.imwrite(save_path, cv2.cvtColor(aug, cv2.COLOR_RGB2BGR))
+
+        else:
+            # VAL & TEST: copy only
+            print(f"\n📁 Menyalin split '{split}' tanpa augmentasi...")
+            for cls in os.listdir(src_split_dir):
+                src_cls_dir = os.path.join(src_split_dir, cls)
+                dst_cls_dir = os.path.join(dst_split_dir, cls)
+                os.makedirs(dst_cls_dir, exist_ok=True)
+
+                for f in os.listdir(src_cls_dir):
+                    if f.lower().endswith((".jpg",".jpeg",".png")):
+                        shutil.copy(os.path.join(src_cls_dir, f), os.path.join(dst_cls_dir, f))
+
+        final_output_paths[split] = dst_split_dir
+
+    print("\n✅ Dataset YOLO balanced berhasil dibuat!")
+    print(final_output_paths)
+    return final_output_paths
 
 def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train", label_col="dx"):
     """
@@ -67,7 +175,6 @@ def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train"
 # 1. AUGMENTATION PIPELINE
 # =========================================
 def build_augmentation_layer(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
-    """Augmentasi sederhana dengan OpenCV: flip, rotate, zoom"""
     h, w = img.shape[:2]
 
     # Horizontal flip
@@ -93,9 +200,10 @@ def build_augmentation_layer(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
     return img
 
 
-def load_ham10000(base_dir="dataset", img_size=(224, 224), batch_size=32,
+def load_ham10000_tensor(base_dir="dataset", img_size=(224, 224), batch_size=32,
                      augment=True, balance=False, undersample=False, ratio=1.0,
                      class_names=None, shuffle=True):
+    import tensorflow as tf
     if class_names is None:
         raise ValueError("class_names harus diisi (list nama kelas).")
 
@@ -173,63 +281,63 @@ def load_ham10000(base_dir="dataset", img_size=(224, 224), batch_size=32,
 
 
 
-def show_augment_per_class(base_dir="dataset_ham_seg", output_dir="augment_output", img_size=(224, 224), samples_per_class=3):
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    class_names = sorted(os.listdir(os.path.join(base_dir, "train")))
-    aug_layer = build_augmentation_layer(img_size)
-
-    for class_name in class_names:
-
-        class_input_path = os.path.join(base_dir, "train", class_name)
-        class_output_path = os.path.join(output_dir, class_name)
-        os.makedirs(class_output_path, exist_ok=True)
-
-        img_files = [f for f in os.listdir(class_input_path)
-                     if f.lower().endswith((".jpg", ".jpeg", ".png"))]
-
-        if len(img_files) == 0:
-            print(f"[WARN] No images in class {class_name}")
-            continue
-
-        # Random sample
-        img_files = random.sample(img_files, min(samples_per_class, len(img_files)))
-
-        print(f"Saving augmentation samples for class: {class_name}")
-
-        for img_file in img_files:
-            img_path = os.path.join(class_input_path, img_file)
-
-            # Load
-            img = tf.keras.preprocessing.image.load_img(img_path, target_size=img_size)
-            img = tf.keras.preprocessing.image.img_to_array(img)
-            img = tf.expand_dims(img, 0) / 255.0
-
-            # Augment 3x
-            aug_images = [
-                img[0],
-                aug_layer(img, training=True)[0],
-                aug_layer(img, training=True)[0],
-                aug_layer(img, training=True)[0],
-            ]
-
-            # Save 4 images: original + 3 aug
-            labels = ["original", "aug1", "aug2", "aug3"]
-
-            for i in range(4):
-                out_path = os.path.join(
-                    class_output_path,
-                    f"{os.path.splitext(img_file)[0]}_{labels[i]}.png"
-                )
-                plt.imsave(out_path, aug_images[i].numpy())
-
+# def show_augment_per_class(base_dir="dataset_ham_seg", output_dir="augment_output", img_size=(224, 224), samples_per_class=3):
+#
+#     os.makedirs(output_dir, exist_ok=True)
+#
+#     class_names = sorted(os.listdir(os.path.join(base_dir, "train")))
+#     aug_layer = build_augmentation_layer(img_size)
+#
+#     for class_name in class_names:
+#
+#         class_input_path = os.path.join(base_dir, "train", class_name)
+#         class_output_path = os.path.join(output_dir, class_name)
+#         os.makedirs(class_output_path, exist_ok=True)
+#
+#         img_files = [f for f in os.listdir(class_input_path)
+#                      if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+#
+#         if len(img_files) == 0:
+#             print(f"[WARN] No images in class {class_name}")
+#             continue
+#
+#         # Random sample
+#         img_files = random.sample(img_files, min(samples_per_class, len(img_files)))
+#
+#         print(f"Saving augmentation samples for class: {class_name}")
+#
+#         for img_file in img_files:
+#             img_path = os.path.join(class_input_path, img_file)
+#
+#             # Load
+#             img = tf.keras.preprocessing.image.load_img(img_path, target_size=img_size)
+#             img = tf.keras.preprocessing.image.img_to_array(img)
+#             img = tf.expand_dims(img, 0) / 255.0
+#
+#             # Augment 3x
+#             aug_images = [
+#                 img[0],
+#                 aug_layer(img, training=True)[0],
+#                 aug_layer(img, training=True)[0],
+#                 aug_layer(img, training=True)[0],
+#             ]
+#
+#             # Save 4 images: original + 3 aug
+#             labels = ["original", "aug1", "aug2", "aug3"]
+#
+#             for i in range(4):
+#                 out_path = os.path.join(
+#                     class_output_path,
+#                     f"{os.path.splitext(img_file)[0]}_{labels[i]}.png"
+#                 )
+#                 plt.imsave(out_path, aug_images[i].numpy())
+#
 
 
 
 
 def focal_loss(gamma=2., alpha=0.25):
-
+    import tensorflow as tf
     def focal_loss_fixed(y_true, y_pred):
         y_true = tf.cast(y_true, tf.int32)
 

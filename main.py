@@ -1,11 +1,13 @@
 from config import CLASS_NAMES, HYPERPARAMS
-from models.base_model import ModelBuilder
-from models.model_trainer import ModelTrainer
+# from models.base_model import ModelBuilder
+# from models.model_trainer import ModelTrainer
 from preprocessing import SkinDatasetPreprocessor
 import kagglehub
 import os
-from utils import load_ham10000, focal_loss, show_augment_per_class, save_experiments, notif
+from utils import  notif, \
+    create_yolo_balanced_dataset
 from datetime import datetime
+from ultralytics import YOLO
 
 
 def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datasets", output_segmentations_dir="./preprocessed_datasets_segment"):
@@ -30,8 +32,8 @@ def main():
     path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
     path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
 
-    datasets_output = "./root/preprocessed_datasets2"
-    datasets_segmentation = "./root/segmentation_masks2"
+    datasets_output = "/root/preprocessed_datasets2"
+    datasets_segmentation = "/root/segmentation_masks2"
     output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(output_experiments, exist_ok=True)
 
@@ -42,61 +44,79 @@ def main():
         output_segmentations_dir=datasets_segmentation
     )
 
+    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root="/root/augmented_balanced_dataset", )
+    model = YOLO("yolov11n-cls.pt")
+
+    data = model.train(
+        data=path,
+        epochs=HYPERPARAMS["epochs"],
+        batch=HYPERPARAMS["batch_size"],
+        imgsz=HYPERPARAMS["input_shape"][:2],
+        name="yolov11n-ham10000-segmentation",
+        patience=HYPERPARAMS["patience"],
+    )
+
+    print(data)
+    notif()
+
+
+
     # show_augment_per_class(base_dir=datasets_segmentation, output_dir=output_experiments)
 
     # change based on folder you need
-    train, val, test = load_ham10000(
-            base_dir=datasets_segmentation,
-            img_size=HYPERPARAMS["input_shape"][:2],
-            batch_size=HYPERPARAMS["batch_size"],
-            augment=True,
-            balance=True,
-            undersample=False,
-            ratio=1.0,
-            class_names=CLASS_NAMES,
-    )
+    # train, val, test = load_ham10000_tensor(
+    #         base_dir=datasets_segmentation,
+    #         img_size=HYPERPARAMS["input_shape"][:2],
+    #         batch_size=HYPERPARAMS["batch_size"],
+    #         augment=True,
+    #         balance=True,
+    #         undersample=False,
+    #         ratio=1.0,
+    #         class_names=CLASS_NAMES,
+    # )
 
-    print(f"total val: {len(val)}")
-    print(f"total test: {len(test)}")
 
-    builder = ModelBuilder(
-        HYPERPARAMS["input_shape"],
-        HYPERPARAMS["num_classes"]
-    )
-
-    backbone = builder.build_efficientnet()
-    model = builder.build_model(backbone)
-
-    loss = focal_loss(gamma=2.0, alpha=0.25)
-    trainer = ModelTrainer(model, loss, HYPERPARAMS)
-
-    trainer.compile_model()
-    print("=> Starting Stage 1 training")
-    try:
-        history_stage1 = trainer.train_stage1(train, val)
-
-    # # 6) Optional fine-tune
-        if HYPERPARAMS.get("ft_epochs", 0) > 0:
-            print("=> Starting Fine-tuning (Stage 2)")
-            history_ft = trainer.train_stage2(train, val, backbone)
-    except KeyboardInterrupt:
-        print("Training interrupted. Proceeding to evaluation...")
-    # 7) Evaluate on test set
-    print("=> Evaluating on test set")
-
-    # out_dir = "./saved_models"
-    # out_path = os.path.join(out_dir, f"{HYPERPARAMS['model_name']}_final.h5")
-    # model.save(out_path)
-    # print(f"Model saved to {out_path}")
-
-    save_experiments(
-        trainer.model,
-        None if 'HISTORY_STAGE1' not in locals() else history_stage1,
-        test,
-        CLASS_NAMES,
-        HYPERPARAMS,
-        save_dir=output_experiments
-    )
+    # print(f"total val: {len(val)}")
+    # print(f"total test: {len(test)}")
+    #
+    # builder = ModelBuilder(
+    #     HYPERPARAMS["input_shape"],
+    #     HYPERPARAMS["num_classes"]
+    # )
+    #
+    # backbone = builder.build_efficientnet()
+    # model = builder.build_model(backbone)
+    #
+    # loss = focal_loss(gamma=2.0, alpha=0.25)
+    # trainer = ModelTrainer(model, loss, HYPERPARAMS)
+    #
+    # trainer.compile_model()
+    # print("=> Starting Stage 1 training")
+    # try:
+    #     history_stage1 = trainer.train_stage1(train, val)
+    #
+    # # # 6) Optional fine-tune
+    #     if HYPERPARAMS.get("ft_epochs", 0) > 0:
+    #         print("=> Starting Fine-tuning (Stage 2)")
+    #         history_ft = trainer.train_stage2(train, val, backbone)
+    # except KeyboardInterrupt:
+    #     print("Training interrupted. Proceeding to evaluation...")
+    # # 7) Evaluate on test set
+    # print("=> Evaluating on test set")
+    #
+    # # out_dir = "./saved_models"
+    # # out_path = os.path.join(out_dir, f"{HYPERPARAMS['model_name']}_final.h5")
+    # # model.save(out_path)
+    # # print(f"Model saved to {out_path}")
+    #
+    # save_experiments(
+    #     trainer.model,
+    #     None if 'HISTORY_STAGE1' not in locals() else history_stage1,
+    #     test,
+    #     CLASS_NAMES,
+    #     HYPERPARAMS,
+    #     save_dir=output_experiments
+    # )
 
     notif()
 
