@@ -42,9 +42,10 @@ yolo_aug = A.Compose([
 # CREATE BALANCED YOLO DATASET
 # ============================
 def create_yolo_balanced_dataset(
-    input_root,               # dataset format train/class/*.jpg
-    output_root,              # dataset baru
-    augmentations_per_image=1 # berapa augmentasi untuk oversampling
+    input_root,
+    output_root,
+    augmentations_per_image=1,
+    ratio=None   # <= gunakan ratio misalnya 25
 ):
     os.makedirs(output_root, exist_ok=True)
 
@@ -52,8 +53,8 @@ def create_yolo_balanced_dataset(
     class_counts = {}
 
     print("\n🔍 Menghitung jumlah dataset per class...")
-    # Hitung jumlah per kelas (di train saja)
     train_path = os.path.join(input_root, "train")
+
     for cls in os.listdir(train_path):
         cls_dir = os.path.join(train_path, cls)
         if not os.path.isdir(cls_dir):
@@ -63,10 +64,16 @@ def create_yolo_balanced_dataset(
 
     print("📊 Jumlah per class:", class_counts)
 
-    max_class = max(class_counts.values())  # target balance
-    print(f"\n🎯 Target per kelas (balanced 1:1): {max_class}")
+    max_class = max(class_counts.values())
 
-    # Process all splits
+    # Jika pakai ratio, hitung target per class
+    if ratio is not None:
+        target_per_class = max(1, max_class // ratio)
+        print(f"\n🎯 Ratio 1:{ratio} → Target per kelas = {target_per_class}")
+    else:
+        target_per_class = max_class
+        print(f"\n🎯 Balance default (tanpa ratio) → Target = {target_per_class}")
+
     final_output_paths = {}
 
     for split in splits:
@@ -75,7 +82,7 @@ def create_yolo_balanced_dataset(
         os.makedirs(dst_split_dir, exist_ok=True)
 
         if split == "train":
-            print("\n🚀 Membuat TRAIN dataset balanced + augmentasi...")
+            print("\n🚀 Membuat TRAIN dataset balanced dgn ratio & over/down sampling...")
 
             for cls, n in class_counts.items():
                 src_cls_dir = os.path.join(src_split_dir, cls)
@@ -84,36 +91,45 @@ def create_yolo_balanced_dataset(
 
                 images = [f for f in os.listdir(src_cls_dir) if f.lower().endswith((".jpg",".png",".jpeg"))]
 
-                # Copy original images
-                for img_file in images:
-                    shutil.copy(os.path.join(src_cls_dir, img_file), os.path.join(dst_cls_dir, img_file))
-
-                # Hitung kebutuhan oversampling
-                need = max_class - n
-                if need <= 0:
+                # ---------------------
+                # CASE 1: DOWNSAMPLING
+                # ---------------------
+                if n > target_per_class:
+                    print(f"  🔽 Downsampling class '{cls}' dari {n} → {target_per_class}")
+                    sampled = random.sample(images, target_per_class)
+                    for img_file in sampled:
+                        shutil.copy(os.path.join(src_cls_dir, img_file),
+                                    os.path.join(dst_cls_dir, img_file))
                     continue
 
-                print(f"  ➕ Oversampling class '{cls}' sebanyak {need} images")
+                # ---------------------
+                # Copy originals
+                # ---------------------
+                for img_file in images:
+                    shutil.copy(os.path.join(src_cls_dir, img_file),
+                                os.path.join(dst_cls_dir, img_file))
 
-                for i in range(need):
-                    img_file = random.choice(images)
-                    img_path = os.path.join(src_cls_dir, img_file)
+                # ---------------------
+                # CASE 2: OVERSAMPLING
+                # ---------------------
+                need = target_per_class - n
+                if need > 0:
+                    print(f"  ➕ Oversampling class '{cls}' sebanyak {need} images")
 
-                    img = cv2.imread(img_path)
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    for i in range(need):
+                        img_file = random.choice(images)
+                        img_path = os.path.join(src_cls_dir, img_file)
 
-                    # ----------------
-                    # APPLY AUGMENTATION (FULL PIPELINE)
-                    # ----------------
-                    aug = yolo_aug(image=img)['image']
+                        img = cv2.imread(img_path)
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-                    # save augment
-                    save_name = f"{os.path.splitext(img_file)[0]}_aug_{i}.jpg"
-                    save_path = os.path.join(dst_cls_dir, save_name)
-                    cv2.imwrite(save_path, cv2.cvtColor(aug, cv2.COLOR_RGB2BGR))
+                        aug = yolo_aug(image=img)['image']
+
+                        save_name = f"{os.path.splitext(img_file)[0]}_aug_{i}.jpg"
+                        save_path = os.path.join(dst_cls_dir, save_name)
+                        cv2.imwrite(save_path, cv2.cvtColor(aug, cv2.COLOR_RGB2BGR))
 
         else:
-            # VAL & TEST: copy only
             print(f"\n📁 Menyalin split '{split}' tanpa augmentasi...")
             for cls in os.listdir(src_split_dir):
                 src_cls_dir = os.path.join(src_split_dir, cls)
@@ -122,13 +138,15 @@ def create_yolo_balanced_dataset(
 
                 for f in os.listdir(src_cls_dir):
                     if f.lower().endswith((".jpg",".jpeg",".png")):
-                        shutil.copy(os.path.join(src_cls_dir, f), os.path.join(dst_cls_dir, f))
+                        shutil.copy(os.path.join(src_cls_dir, f),
+                                    os.path.join(dst_cls_dir, f))
 
         final_output_paths[split] = dst_split_dir
 
     print("\n✅ Dataset YOLO balanced berhasil dibuat!")
-    print(final_output_paths)
     return final_output_paths
+
+
 
 def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train", label_col="dx"):
     """

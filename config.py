@@ -16,8 +16,8 @@ HYPERPARAMS = {
     "optimizer": "Adam",
     "learning_rate": 1e-3,
     "batch_size": 32,
-    "epochs": 50,
-    "patience": 10,
+    "epochs": 25,
+    "patience": 5,
 
     "ft_lr": 1e-5,
     "ft_epochs": 50,

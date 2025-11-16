@@ -32,8 +32,8 @@ def main():
     path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
     path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
 
-    datasets_output = "/root/preprocessed_datasets3"
-    datasets_segmentation = "/root/segmentation_masks3"
+    datasets_output = "/root/preprocessed_datasets4"
+    datasets_segmentation = "/root/segmentation_masks4"
     output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(output_experiments, exist_ok=True)
 
@@ -44,9 +44,9 @@ def main():
         output_segmentations_dir=datasets_segmentation,
         size=HYPERPARAMS["input_shape"][:2]
     )
-    output_root="/root/augmented_balanced_dataset3"
+    output_root="/root/augmented_balanced_dataset4"
     path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, )
-    model = YOLO("yolo11m-cls.pt")
+    model = YOLO("yolov8s-cls.pt")
 
     data = model.train(
         data=output_root,
