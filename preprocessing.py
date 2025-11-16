@@ -1,3 +1,4 @@
+from tqdm import tqdm
 import os
 import pandas as pd
 import numpy as np
@@ -13,26 +14,21 @@ class SkinDatasetPreprocessor:
                  output_root="./preprocessed_datasets",
                  output_root_segment="./preprocessed_datasets_segment",
                  segmentations_dir=None):
-        """
-        segmentations_dir → lokasi folder mask segmentasi,
-        contoh:
-        /kaggle/input/ham10000-lesion-segmentations/HAM10000_segmentations_lesion_tschandl
-        """
 
         self.base_image_dir = base_image_dir
         self.dataset_dir = dataset_dir
         self.output_root = output_root
         self.output_root_segment = output_root_segment
-        self.segmentations_dir = segmentations_dir  # <--- input new
+        self.segmentations_dir = segmentations_dir
 
-        # ---- Download original HAM10000 ----
+
         gdown.download_folder(
             url="https://drive.google.com/drive/folders/17jgvIeKQnUvk6DmdUJWCIA_fcMxbZ_h_",
             output=self.base_image_dir,
             quiet=False,
             use_cookies=False,
         )
-        
+
         self.dict_datasets = {
             "test": "test_hidden.csv",
             "train": "train.csv",
@@ -40,21 +36,21 @@ class SkinDatasetPreprocessor:
         }
         self.dfs = {}
 
-    # -----------------------------------------------------------
+    # ============================================================
     def load_csv(self):
         for split, filename in self.dict_datasets.items():
             path = os.path.join(self.base_image_dir, filename)
             self.dfs[split] = pd.read_csv(path)
             print(f"Loaded {split:<5}: {self.dfs[split].shape[0]} rows")
 
-    # -----------------------------------------------------------
+    # ============================================================
     def safe_create_dataset(self, csv_file, split_type):
         split_path = os.path.join(self.output_root, split_type)
         if os.path.exists(split_path) and len(os.listdir(split_path)) > 0:
-            print(f"Folder '{split_type}' already exists — SKIP")
+            print(f"[SKIP] Folder '{split_type}' sudah ada dan tidak kosong")
             return
 
-        print(f"Creating dataset for '{split_type}'...")
+        print(f"[CREATE] Dataset '{split_type}'...")
         create_dataset_by_dx(
             csv_path=csv_file,
             image_root=self.dataset_dir,
@@ -62,15 +58,15 @@ class SkinDatasetPreprocessor:
             label_col="dx",
             output_folder=self.output_root,
         )
-        print(f"Done creating '{split_type}'")
+        print(f"[DONE] '{split_type}'")
 
-    # -----------------------------------------------------------
+    # ============================================================
     def create_all_datasets(self):
         for mode, filename in self.dict_datasets.items():
             csv_path = os.path.join(self.base_image_dir, filename)
             self.safe_create_dataset(csv_path, mode)
 
-    # -----------------------------------------------------------
+    # ============================================================
     def plot_train_distribution(self):
         if "train" not in self.dfs:
             print("Train CSV not loaded. Call load_csv() first.")
@@ -78,86 +74,92 @@ class SkinDatasetPreprocessor:
 
         counts = self.dfs["train"]["dx"].value_counts()
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-        counts.plot(kind="bar", ax=ax)
+        plt.figure(figsize=(10, 5))
+        ax = counts.plot(kind="bar")
 
         for i, count in enumerate(counts):
-            ax.text(i, count + 1, str(count), ha="center", va="bottom", fontsize=10)
+            ax.text(i, count + 1, str(count), ha="center", fontsize=10)
 
-        ax.set_title("Jumlah Data per Kelas (dx) - TRAIN")
+        ax.set_title("Jumlah Data per Kelas - TRAIN")
         ax.set_ylabel("Jumlah")
         ax.set_xlabel("Kelas Diagnosis (dx)")
         plt.tight_layout()
         plt.show()
 
-    # -----------------------------------------------------------
+    # ============================================================
+    #       SAFE & TQDM — APPLY SEGMENTATION MASKS
+    # ============================================================
     def apply_segmentation_masks(self, do_crop=True):
 
         if self.segmentations_dir is None:
-            raise ValueError("ERROR: segmentations_dir belum di-set. Masukkan path lewat constructor!")
+            raise ValueError("ERROR: segmentations_dir belum diisi!")
 
-        print("\n=== APPLY SEGMENTATION MASKS ===\n")
-        print(f"Using segmentation folder: {self.segmentations_dir}\n")
+        print("\n=== APPLY SEGMENTATION MASKS ===")
+        print(f"Segmentation folder: {self.segmentations_dir}\n")
+
+        # Skip entire process if already created
+        if os.path.exists(self.output_root_segment):
+            if any(os.scandir(self.output_root_segment)):
+                print("[SKIP] Folder segmentasi sudah ada dan berisi file.")
+                return
 
         for split in ["train", "val", "test"]:
-            in_split_dir = os.path.join(self.output_root, split)
-            out_split_dir = os.path.join(self.output_root_segment, split)
+            src_split_path = os.path.join(self.output_root, split)
+            dst_split_path = os.path.join(self.output_root_segment, split)
 
-            if not os.path.isdir(in_split_dir):
-                print(f"[SKIP] Split '{split}' tidak ditemukan.")
+            if not os.path.isdir(src_split_path):
+                print(f"[SKIP] Folder '{split}' tidak ditemukan.")
                 continue
 
-            print(f"Processing {split}...")
+            print(f"[PROCESS] {split}...")
+            os.makedirs(dst_split_path, exist_ok=True)
 
-            for cls in os.listdir(in_split_dir):
-                cls_in_dir = os.path.join(in_split_dir, cls)
-                if not os.path.isdir(cls_in_dir):
-                    continue
+            classes = [d for d in os.listdir(src_split_path) if os.path.isdir(os.path.join(src_split_path, d))]
 
-                cls_out_dir = os.path.join(out_split_dir, cls)
-                os.makedirs(cls_out_dir, exist_ok=True)
+            for cls in classes:
+                cls_src = os.path.join(src_split_path, cls)
+                cls_dst = os.path.join(dst_split_path, cls)
+                os.makedirs(cls_dst, exist_ok=True)
 
-                for fname in os.listdir(cls_in_dir):
-                    if not fname.lower().endswith(('.jpg', '.jpeg', '.png')):
-                        continue
+                images = [f for f in os.listdir(cls_src) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
 
-                    img_path = os.path.join(cls_in_dir, fname)
+                # TQDM progress bar
+                for fname in tqdm(images, desc=f"{split}/{cls}", ncols=80):
+
+                    img_path = os.path.join(cls_src, fname)
                     img = Image.open(img_path).convert("RGB")
                     img_np = np.array(img)
 
-                    # ---- Mask name ----
                     base, _ = os.path.splitext(fname)
                     mask_name = f"{base}_segmentation.png"
                     mask_path = os.path.join(self.segmentations_dir, mask_name)
 
                     if not os.path.isfile(mask_path):
-                        print(f"[WARNING] Mask missing: {mask_name}")
+                        # missing mask
                         continue
 
+                        # load mask
                     mask = Image.open(mask_path).convert("L")
                     mask_np = np.array(mask)
                     mask_bool = mask_np > 0
-                    mask_bool_3c = np.expand_dims(mask_bool, axis=-1)
 
-                    segmented = img_np * mask_bool_3c
-                    segmented_img = Image.fromarray(segmented)
+                    # apply mask to RGB channels
+                    mask3 = np.repeat(mask_bool[:, :, None], 3, axis=2)
+                    result = img_np * mask3
 
-                    # ---- CROP ----
+                    segmented = Image.fromarray(result)
+
+                    # crop bounding box
                     if do_crop:
                         ys, xs = np.where(mask_bool)
-                        if len(xs) == 0 or len(ys) == 0:
-                            print(f"[WARNING] Empty mask: {mask_name}")
-                            continue
+                        if len(xs) > 0:
+                            x1, x2 = xs.min(), xs.max()
+                            y1, y2 = ys.min(), ys.max()
+                            segmented = segmented.crop((x1, y1, x2, y2))
 
-                        x_min, x_max = xs.min(), xs.max()
-                        y_min, y_max = ys.min(), ys.max()
+                    # save output
+                    segmented.save(os.path.join(cls_dst, fname))
 
-                        segmented_img = segmented_img.crop((x_min, y_min, x_max, y_max))
+            print(f"[DONE] {split}")
 
-                    # Save output
-                    segmented_img.save(os.path.join(cls_out_dir, fname))
-
-            print(f"[DONE] {split}\n")
-
-        print("\n=== ALL SEGMENTATION DONE! ===\n")
-        
+        print("\n=== SEGMENTATION COMPLETE ===\n")

@@ -1,12 +1,22 @@
+import json
+import re
+from datetime import datetime
+
 import pandas as pd
 import shutil
+
+from keras.src.utils import to_categorical
+from tabulate import tabulate
+import random
 from config import CLASS_NAMES
 import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
 import os
-import tqdm
+from tqdm import tqdm
 import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc, roc_auc_score
+import seaborn as sns
 
 
 def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train", label_col="dx"):
@@ -53,102 +63,248 @@ def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train"
 # =========================================
 # 1. AUGMENTATION PIPELINE
 # =========================================
+def build_augmentation_layer():
+    return tf.keras.Sequential([
+        # tf.keras.layers.RandomBrightness(0.15),
+        # tf.keras.layers.RandomContrast(0.15),
+        # tf.keras.layers.RandomSaturation(0.1),
+        # tf.keras.layers.RandomHue(0.05),
 
-def build_augmentation_layer(
-    max_angle=10,
-    max_shift=0.05,
-    contrast_strength=0.05,
-    noise_std=0.03,
-):
-    return tf.keras.Sequential(
-        [
-            layers.RandomFlip("horizontal"),
-            layers.RandomRotation(max_angle / 180.0),
-            layers.RandomTranslation(max_shift, max_shift),
-            layers.RandomContrast(contrast_strength),
-            layers.GaussianNoise(noise_std),
-        ],
-        name="augmentation",
-    )
+        # sedikit saja rotasi, tidak memotong lesion
+        tf.keras.layers.RandomRotation(0.02, fill_mode="nearest"),
+        tf.keras.layers.RandomFlip("horizontal"),
+        tf.keras.layers.RandomZoom(0.1, fill_mode="nearest"),
+        tf.keras.layers.RandomFlip("vertical"),
 
+        # noise
+        # tf.keras.layers.GaussianNoise(0.02),
+    ])
+
+def save_experiments(model, history, test_ds, class_names, hyperparams,
+                     save_dir=None):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if save_dir is None:
+        save_dir = f"/kaggle/working/experiments_{timestamp}"
+    os.makedirs(save_dir, exist_ok=True)
+
+    # ---- Save Hyperparameters ----
+    with open(os.path.join(save_dir, "hyperparameters.json"), "w") as f:
+        json.dump(hyperparams, f, indent=4)
+
+    # ---- Save Model ----
+    model.save(os.path.join(save_dir, "model_best.h5"))
+
+    # ---- Save Summary ----
+    with open(os.path.join(save_dir, "model_summary.txt"), "w") as f:
+        model.summary(print_fn=lambda x: f.write(x + "\n"))
+
+    # ---- Plot Accuracy ----
+    plt.figure()
+    plt.plot(history.history['accuracy'], label='Train Acc')
+    plt.plot(history.history['val_accuracy'], label='Val Acc')
+    plt.xlabel("Epoch"); plt.ylabel("Accuracy")
+    plt.legend(); plt.title("Train vs Validation Accuracy")
+    plt.savefig(os.path.join(save_dir, "train_val_accuracy.jpg")); plt.close()
+
+    # ---- Plot Loss ----
+    plt.figure()
+    plt.plot(history.history['loss'], label='Train Loss')
+    plt.plot(history.history['val_loss'], label='Val Loss')
+    plt.xlabel("Epoch"); plt.ylabel("Loss")
+    plt.legend(); plt.title("Train vs Validation Loss")
+    plt.savefig(os.path.join(save_dir, "train_val_loss.jpg")); plt.close()
+
+    # ---- Collect Predictions ----
+    y_true, y_pred, y_probs = [], [], []
+    for images, labels in test_ds:
+        preds = model.predict(images, verbose=0)
+        y_probs.extend(preds)
+        y_pred.extend(np.argmax(preds, axis=1))
+        y_true.extend(labels.numpy())
+
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    y_probs = np.array(y_probs)
+
+    # ---- Confusion Matrix (Raw) ----
+    cm = confusion_matrix(y_true, y_pred)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=class_names, yticklabels=class_names)
+    plt.title("Confusion Matrix (Raw)")
+    plt.xlabel("Predicted"); plt.ylabel("True")
+    plt.savefig(os.path.join(save_dir, "confusion_matrix_raw.jpg"))
+    plt.close()
+
+    # ---- Confusion Matrix (Normalized) ----
+    cm_norm = confusion_matrix(y_true, y_pred, normalize='true')
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm_norm, annot=True, fmt=".2f", cmap="Blues",
+                xticklabels=class_names, yticklabels=class_names)
+    plt.title("Confusion Matrix (Normalized)")
+    plt.xlabel("Predicted"); plt.ylabel("True")
+    plt.savefig(os.path.join(save_dir, "confusion_matrix_normalized.jpg"))
+    plt.close()
+
+    # ---- Classification Report ----
+    report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
+    with open(os.path.join(save_dir, "classification_report.json"), "w") as f:
+        json.dump(report, f, indent=4)
+
+    # ---- ROC-AUC ----
+    try:
+        y_true_bin = to_categorical(y_true, num_classes=len(class_names))
+        auc_scores = {}
+
+        plt.figure(figsize=(8, 6))
+        for i, cls in enumerate(class_names):
+            fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_probs[:, i])
+            score = auc(fpr, tpr)
+            auc_scores[cls] = score
+            plt.plot(fpr, tpr, label=f"{cls} (AUC={score:.2f})")
+
+        macro_auc = roc_auc_score(y_true_bin, y_probs, average='macro')
+        plt.plot([0,1],[0,1],'k--')
+        plt.title(f"ROC Curve (macro AUC = {macro_auc:.3f})")
+        plt.xlabel("FPR"); plt.ylabel("TPR"); plt.legend()
+        plt.savefig(os.path.join(save_dir, "roc_auc_curve.jpg")); plt.close()
+
+        with open(os.path.join(save_dir, "roc_auc_scores.json"), "w") as f:
+            json.dump({"per_class": auc_scores, "macro_auc": macro_auc}, f, indent=4)
+
+    except Exception as e:
+        print("ROC AUC skipped:", e)
+
+    # ---- SIMPAN HASIL PREDIKSI KE CSV ----
+    results = pd.DataFrame({
+        "true_label": [class_names[i] for i in y_true],
+        "pred_label": [class_names[i] for i in y_pred],
+    })
+    prob_df = pd.DataFrame(y_probs, columns=[f"prob_{c}" for c in class_names])
+    results = pd.concat([results, prob_df], axis=1)
+    results.to_csv(os.path.join(save_dir, "predictions_test.csv"), index=True)
+
+    print(f"✅ Semua hasil disimpan di: {save_dir}")
+
+
+def show_augment_per_class(base_dir="dataset_ham_seg",
+                           output_dir="augment_output",
+                           img_size=(224, 224),
+                           samples_per_class=3):
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    class_names = sorted(os.listdir(os.path.join(base_dir, "train")))
+    aug_layer = build_augmentation_layer()
+
+    for class_name in class_names:
+
+        class_input_path = os.path.join(base_dir, "train", class_name)
+        class_output_path = os.path.join(output_dir, class_name)
+        os.makedirs(class_output_path, exist_ok=True)
+
+        img_files = [f for f in os.listdir(class_input_path)
+                     if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+
+        if len(img_files) == 0:
+            print(f"[WARN] No images in class {class_name}")
+            continue
+
+        # Random sample
+        img_files = random.sample(img_files, min(samples_per_class, len(img_files)))
+
+        print(f"Saving augmentation samples for class: {class_name}")
+
+        for img_file in img_files:
+            img_path = os.path.join(class_input_path, img_file)
+
+            # Load
+            img = tf.keras.preprocessing.image.load_img(img_path, target_size=img_size)
+            img = tf.keras.preprocessing.image.img_to_array(img)
+            img = tf.expand_dims(img, 0) / 255.0
+
+            # Augment 3x
+            aug_images = [
+                img[0],
+                aug_layer(img, training=True)[0],
+                aug_layer(img, training=True)[0],
+                aug_layer(img, training=True)[0],
+            ]
+
+            # Save 4 images: original + 3 aug
+            labels = ["original", "aug1", "aug2", "aug3"]
+
+            for i in range(4):
+                out_path = os.path.join(
+                    class_output_path,
+                    f"{os.path.splitext(img_file)[0]}_{labels[i]}.png"
+                )
+                plt.imsave(out_path, aug_images[i].numpy())
 
 # =========================================
 # 2. OVERSAMPLING / UNDERSAMPLING
 # =========================================
+# =========================================
+# 2. OVERSAMPLING / UNDERSAMPLING (FIXED)
+# =========================================
 def balance_dataset(raw_train, class_counts, ratio=1.0, undersample=False):
-    """
-    Mengembalikan dataset balanced (oversample atau undersample).
-    """
-    if undersample:
-        target = int(min(class_counts.values()) * ratio)
-    else:
-        target = int(max(class_counts.values()) * ratio)
+    import tensorflow as tf
 
-    print("Target per-class =", target)
+    max_count = max(class_counts.values())
+    target = int(max_count * ratio)
+
+    print("\n===== BALANCING REPORT =====")
+    print(f"Target per class = {target}\n")
 
     datasets = []
 
+    total_generated = 0
+
     for cls, count in class_counts.items():
 
-        # Filter dataset untuk 1 kelas
-        ds_cls = raw_train.filter(lambda x, y: tf.equal(y, cls))
+        # Filter dataset per class
+        ds_cls = raw_train.filter(lambda x, y, c=cls: tf.equal(y, c))
 
         if undersample:
-            # Batasi jumlah
+            # ========================
+            # UNDERSAMPLING
+            # ========================
+            drop_amount = max(0, count - target)
             ds_cls = ds_cls.shuffle(4096).take(target)
+
+            print(f"{cls}: {count} → {target}  (undersampled: {drop_amount})")
+
         else:
-            # Perbanyak jumlah
+            # ========================
+            # OVERSAMPLING (REPEAT)
+            # ========================
             repeat_factor = max(1, target // count)
             ds_cls = ds_cls.repeat(repeat_factor + 1)
 
+            generated = repeat_factor * count
+            total_generated += generated
+
+            print(
+                f"{cls}: {count} → {count + generated} "
+                f"(generated: {generated}, repeat x{repeat_factor+1})"
+            )
+
         datasets.append(ds_cls)
 
-    # Gabungkan semua kelas
+    print(f"\nTOTAL GENERATED: {total_generated} images")
+    print("=============================\n")
+
+    # gabungkan dataset
     final = datasets[0]
     for ds in datasets[1:]:
         final = final.concatenate(ds)
 
-    return final.shuffle(4096)
-    
-def show_batch(dataset, aug_layer=None, max_images=9):
-    plt.figure(figsize=(12, 12))
+    final = final.shuffle(4096)
 
-    for images, labels in dataset.take(1):
-        images = tf.image.convert_image_dtype(images, tf.float32)
+    return final
 
-        if aug_layer is not None:
-            images = aug_layer(images, training=True)
 
-        imgs = images.numpy()
-        imgs = (imgs * 255).astype("uint8")
-
-        labels = labels.numpy()
-        count = min(max_images, imgs.shape[0])
-        rows = int(np.ceil(count / 3))
-
-        for i in range(count):
-            plt.subplot(rows, 3, i + 1)
-            plt.imshow(imgs[i])
-            plt.title(str(labels[i]))
-            plt.axis("off")
-
-    plt.tight_layout()
-    plt.show()
-
-# =========================================
-# 3. DATASET LOADER
-# =========================================
-
-def load_ham10000(
-    base_dir="dataset",
-    img_size=(224,224),
-    batch_size=32,
-    augment=True,
-    balance=False,
-    undersample=False,
-    ratio=1.0,
-    class_names=None,
-):
+def load_ham10000(base_dir="dataset",img_size=(224,224),batch_size=32,augment=True,balance=False,undersample=False,ratio=1.0,class_names=None):
 
     AUTOTUNE = tf.data.AUTOTUNE
     aug = build_augmentation_layer()
@@ -172,20 +328,20 @@ def load_ham10000(
     class_counts = None
 
     if balance:
-        class_counts = {i:0 for i in range(len(class_names))}
+        # unbatch dulu agar x.shape = (H,W,C) dan y.shape=()
+        train_raw = train_raw.unbatch()
+
+        class_counts = {i: 0 for i in range(len(class_names))}
         for _, lbl in train_raw:
-            class_counts[int(lbl.numpy()[0])] += 1
+            class_counts[int(lbl.numpy())] += 1
 
         print("\nClass Counts:", class_counts)
 
-        # Balance dataset
-        train_raw = balance_dataset(train_raw, class_counts, ratio, undersample)
+        train_raw = balance_dataset(train_raw, class_counts, ratio)
 
-        # Resize batch kembali
+        # batch kembali
         train_ds = train_raw.batch(batch_size)
-
     else:
-        # No balancing
         train_ds = train_raw
 
     # ------------------------------------
@@ -243,3 +399,89 @@ def focal_loss(gamma=2., alpha=0.25):
         return loss
 
     return focal_loss_fixed
+
+def custom_model_summary(model):
+    rows = []
+    for i, layer in enumerate(model.layers):
+        rows.append([
+            i,
+            layer.name,
+            layer.__class__.__name__,
+            str(layer.output_shape if hasattr(layer, "output_shape") else "-"),
+            layer.count_params(),
+            layer.trainable
+        ])
+
+    print("\n========== FULL MODEL SUMMARY ==========")
+    print(tabulate(
+        rows,
+        headers=["Index", "Layer Name", "Type", "Output Shape", "Params", "Trainable"],
+        tablefmt="grid"
+    ))
+
+def safe_unfreeze_blocks(backbone, n_blocks=2):
+    """
+    Unfreeze berdasarkan JUMLAH BLOCK terakhir.
+    BatchNorm tetap frozen.
+    """
+
+    block_dict = {}
+    block_pattern = re.compile(r"(block\d+[a-z]*)")
+
+    for layer in backbone.layers:
+        match = block_pattern.search(layer.name)
+        if match:
+            block_name = match.group(1)
+        else:
+            block_name = "other"   # stem / top
+
+        if block_name not in block_dict:
+            block_dict[block_name] = []
+        block_dict[block_name].append(layer)
+
+    # 2. Urutkan block berdasarkan angkanya
+    sorted_blocks = sorted(
+        [b for b in block_dict.keys() if b != "other"],
+        key=lambda x: int(re.findall(r'\d+', x)[0])
+    )
+
+    # 3. Ambil N block terakhir
+    blocks_to_unfreeze = sorted_blocks[-n_blocks:]
+    print("\n🔓 Unfreezing blocks:", blocks_to_unfreeze)
+
+    # 4. Set trainable=True untuk block tersebut (kecuali BN)
+    for block_name in blocks_to_unfreeze:
+        for layer in block_dict[block_name]:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = False
+            else:
+                layer.trainable = True
+
+    # 5. Semua block lain → trainable=False
+    for block_name in sorted_blocks:
+        if block_name not in blocks_to_unfreeze:
+            for layer in block_dict[block_name]:
+                layer.trainable = False
+
+    # 6. Tampilkan tabel status trainable
+    table = []
+    idx = 0
+
+    for block_name in sorted_blocks:
+        for layer in block_dict[block_name]:
+            table.append([
+                idx,
+                layer.name,
+                block_name,
+                layer.trainable
+            ])
+            idx += 1
+
+    print("\n========== BLOCK TRAINABLE TABLE ==========")
+    print(tabulate(
+        table,
+        headers=["Index", "Layer Name", "Block", "Trainable"],
+        tablefmt="grid"
+    ))
+
+    return blocks_to_unfreeze

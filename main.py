@@ -1,8 +1,12 @@
-from config import CLASS_NAMES
+from config import CLASS_NAMES, HYPERPARAMS
+from models.base_model import ModelBuilder
+from models.model_trainer import ModelTrainer
 from preprocessing import SkinDatasetPreprocessor
 import kagglehub
 import os
-from utils import load_ham10000
+from utils import load_ham10000, focal_loss, show_augment_per_class, save_experiments
+from datetime import datetime
+
 
 def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datasets", output_segmentations_dir="./preprocessed_datasets_segment"):
     """
@@ -17,16 +21,19 @@ def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datas
 
     preprocessor.load_csv()
     preprocessor.create_all_datasets()
-    preprocessor.plot_train_distribution()
-    preprocessing.apply_segmentation_masks(True)
+    # preprocessor.plot_train_distribution()
+    preprocessor.apply_segmentation_masks(True)
 
 
 def main():
     path_ham10000 = kagglehub.dataset_download("kmader/skin-cancer-mnist-ham10000")
     path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
+    path_segmentations = f"{path_segmentations}\HAM10000_segmentations_lesion_tschandl"
 
     datasets_output = "./root/preprocessed_datasets"
     datasets_segmentation = "./root/segmentation_masks"
+    output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    os.makedirs(output_experiments, exist_ok=True)
 
     preprocessing(
         ham_path=path_ham10000,
@@ -35,24 +42,58 @@ def main():
         output_segmentations_dir=datasets_segmentation
     )
 
-    # test, val, train = load_ham10000(
-    #     base_dir=segment_datasets,
-    #     img_size=HYPERPARAMS["input_shape"][:2],
-    #     batch_size=HYPERPARAMS["batch_size"],
-    #     augment=True
-    # )
+    show_augment_per_class(base_dir=datasets_segmentation, output_dir=output_experiments)
 
     # change based on folder you need
-    load_ham10000(
+    train, val, test = load_ham10000(
             base_dir=datasets_segmentation,
             img_size=(224, 224),
             batch_size=32,
             augment=True,
-            balance=False,
+            balance=True,
             undersample=False,
             ratio=1.0,
             class_names=CLASS_NAMES,
     )
+
+    print(f"total val: {len(val)}")
+    print(f"total test: {len(test)}")
+
+    builder = ModelBuilder(
+        HYPERPARAMS["input_shape"],
+        HYPERPARAMS["num_classes"]
+    )
+
+    backbone = builder.build_efficientnet()
+    model = builder.build_model(backbone)
+
+    loss = focal_loss(gamma=2.0, alpha=0.25)
+    trainer = ModelTrainer(model, loss, HYPERPARAMS)
+
+    trainer.compile_model()
+    print("=> Starting Stage 1 training")
+    history_stage1 = trainer.train_stage1(train, val)
+
+    # 6) Optional fine-tune
+    if HYPERPARAMS.get("ft_epochs", 0) > 0:
+        print("=> Starting Fine-tuning (Stage 2)")
+        history_ft = trainer.train_stage2(train, val, backbone)
+
+    # out_dir = "./saved_models"
+    # out_path = os.path.join(out_dir, f"{HYPERPARAMS['model_name']}_final.h5")
+    # model.save(out_path)
+    # print(f"Model saved to {out_path}")
+
+    save_experiments(
+        model,
+        history_stage1,
+        test,
+        CLASS_NAMES,
+        HYPERPARAMS,
+        save_dir=output_experiments
+    )
+
+
 
 
 if __name__ == "__main__":
