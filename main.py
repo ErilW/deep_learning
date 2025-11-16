@@ -46,7 +46,7 @@ def main():
     )
     output_root="/root/augmented_balanced_dataset5"
     path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=50 )
-    model = YOLO("yolov8s-cls.pt")
+    model = YOLO("yolo11m-cls.pt")
 
     model.train(
         data=output_root,  # folder classification
@@ -59,7 +59,6 @@ def main():
         optimizer="SGD"  # paper biasanya pakai SGD
     )
 
-    print(data)
     notif()
 
 
