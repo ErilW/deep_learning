@@ -32,7 +32,7 @@ yolo_aug = A.Compose([
     A.Affine(shear=(-10, 10), p=0.7),
     A.HorizontalFlip(p=1.0),
     A.VerticalFlip(p=1.0),
-    A.Mosaic(p=1.0),
+    # A.Mosaic(p=1.0, metadata_key=),
     # A.RandAugment(num_ops=2, magnitude=7, p=1.0),
     # A.CoarseDropout(max_holes=8, max_height=0.3, max_width=0.3, min_holes=1, p=0.4),
 ])
