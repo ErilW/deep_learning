@@ -33,8 +33,8 @@ yolo_aug = A.Compose([
     A.HorizontalFlip(p=1.0),
     A.VerticalFlip(p=1.0),
     A.Mosaic(p=1.0),
-    A.RandAugment(num_ops=2, magnitude=7, p=1.0),
-    A.CoarseDropout(max_holes=8, max_height=0.3, max_width=0.3, min_holes=1, p=0.4),
+    # A.RandAugment(num_ops=2, magnitude=7, p=1.0),
+    # A.CoarseDropout(max_holes=8, max_height=0.3, max_width=0.3, min_holes=1, p=0.4),
 ])
 
 
