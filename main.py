@@ -45,7 +45,7 @@ def main():
     )
 
     path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root="/root/augmented_balanced_dataset", )
-    model = YOLO("yolov11n-cls.pt")
+    model = YOLO("yolo11m-cls.pt")
 
     data = model.train(
         data=path,
