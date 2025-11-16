@@ -66,7 +66,7 @@ def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train"
 # =========================================
 # 1. AUGMENTATION PIPELINE
 # =========================================
-def build_augmentation_(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
+def build_augmentation(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
     """Augmentasi sederhana dengan OpenCV: flip, rotate, zoom"""
     h, w = img.shape[:2]
 
@@ -152,7 +152,7 @@ def load_ham10000(base_dir="dataset", img_size=(224, 224), batch_size=32,
     # ====================
     if augment:
         for i in range(len(train_images)):
-            train_images[i] = build_augmentation_cv(train_images[i])
+            train_images[i] = build_augmentation(train_images[i])
 
     # ====================
     # Convert ke tf.data.Dataset
