@@ -1,0 +1,15 @@
+tqdm
+requests
+kagglehub
+pandas
+matplotlib
+shutil
+tensorflow-addons
+torch 
+opencv-python
+seaborn 
+scikit-learn 
+torch 
+opencv-python
+tabulate
+tensorflow-addons   
