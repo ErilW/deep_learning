@@ -66,7 +66,7 @@ def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train"
 # =========================================
 # 1. AUGMENTATION PIPELINE
 # =========================================
-def build_augmentation(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
+def build_augmentation_layer(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
     """Augmentasi sederhana dengan OpenCV: flip, rotate, zoom"""
     h, w = img.shape[:2]
 
@@ -152,7 +152,7 @@ def load_ham10000(base_dir="dataset", img_size=(224, 224), batch_size=32,
     # ====================
     if augment:
         for i in range(len(train_images)):
-            train_images[i] = build_augmentation(train_images[i])
+            train_images[i] = build_augmentation_layer(train_images[i])
 
     # ====================
     # Convert ke tf.data.Dataset
@@ -170,137 +170,7 @@ def load_ham10000(base_dir="dataset", img_size=(224, 224), batch_size=32,
 
     print(f"Train: {len(train_images)}, Val: {len(val_images)}, Test: {len(test_images)}")
     return train_ds, val_ds, test_ds
-def balance_dataset(raw_train, class_counts, ratio=1.0, undersample=False):
-    import tensorflow as tf
 
-    max_count = max(class_counts.values())
-    target = int(max_count * ratio)
-
-    print("\n===== BALANCING REPORT =====")
-    print(f"Target per class = {target}\n")
-
-    datasets = []
-
-    total_generated = 0
-
-    for cls, count in class_counts.items():
-
-        # Filter dataset per class
-        ds_cls = raw_train.filter(lambda x, y, c=cls: tf.equal(y, c))
-
-        if undersample:
-            # ========================
-            # UNDERSAMPLING
-            # ========================
-            drop_amount = max(0, count - target)
-            ds_cls = ds_cls.shuffle(4096).take(target)
-
-            print(f"{cls}: {count} → {target}  (undersampled: {drop_amount})")
-
-        else:
-            # ========================
-            # OVERSAMPLING (REPEAT)
-            # ========================
-            repeat_factor = max(1, target // count)
-            ds_cls = ds_cls.repeat(repeat_factor + 1)
-
-            generated = repeat_factor * count
-            total_generated += generated
-
-            print(
-                f"{cls}: {count} → {count + generated} "
-                f"(generated: {generated}, repeat x{repeat_factor+1})"
-            )
-
-        datasets.append(ds_cls)
-
-    print(f"\nTOTAL GENERATED: {total_generated} images")
-    print("=============================\n")
-
-    # gabungkan dataset
-    final = datasets[0]
-    for ds in datasets[1:]:
-        final = final.concatenate(ds)
-
-    final = final.shuffle(4096)
-
-    return final
-    AUTOTUNE = tf.data.AUTOTUNE
-    aug = build_augmentation_layer()
-
-    if class_names is None:
-        raise ValueError("class_names harus diisi (list nama kelas).")
-
-    # ------------------------------------
-    # A. LOAD RAW TRAIN (batch=1 jika balance=True)
-    # ------------------------------------
-    train_raw = tf.keras.preprocessing.image_dataset_from_directory(
-        os.path.join(base_dir, "train"),
-        label_mode="int",
-        class_names=class_names,
-        image_size=img_size,
-        shuffle=True,
-        batch_size=1 if balance else batch_size
-    ).map(lambda x,y: (tf.image.convert_image_dtype(x, tf.float32), y))
-
-    # Hitung distribusi
-    class_counts = None
-
-    if balance:
-        # unbatch dulu agar x.shape = (H,W,C) dan y.shape=()
-        train_raw = train_raw.unbatch()
-
-        class_counts = {i: 0 for i in range(len(class_names))}
-        for _, lbl in train_raw:
-            class_counts[int(lbl.numpy())] += 1
-
-        print("\nClass Counts:", class_counts)
-
-        train_raw = balance_dataset(train_raw, class_counts, ratio)
-
-        # batch kembali
-        train_ds = train_raw.batch(batch_size)
-    else:
-        train_ds = train_raw
-
-    # ------------------------------------
-    # B. Tambah augmentasi
-    # ------------------------------------
-    if augment:
-        train_ds = train_ds.map(
-            lambda x,y: (aug(x, training=True), y),
-            num_parallel_calls=AUTOTUNE
-        )
-
-    train_ds = train_ds.prefetch(AUTOTUNE)
-
-    # ------------------------------------
-    # C. VAL
-    # ------------------------------------
-    val_ds = tf.keras.preprocessing.image_dataset_from_directory(
-        os.path.join(base_dir, "val"),
-        label_mode="int",
-        class_names=class_names,
-        image_size=img_size,
-        shuffle=False,
-        batch_size=batch_size
-    ).map(lambda x,y: (tf.image.convert_image_dtype(x, tf.float32), y)
-    ).prefetch(AUTOTUNE)
-
-    # ------------------------------------
-    # D. TEST
-    # ------------------------------------
-    test_ds = tf.keras.preprocessing.image_dataset_from_directory(
-        os.path.join(base_dir, "test"),
-        label_mode="int",
-        class_names=class_names,
-        image_size=img_size,
-        shuffle=False,
-        batch_size=batch_size
-    ).map(lambda x,y: (tf.image.convert_image_dtype(x, tf.float32), y)
-    ).prefetch(AUTOTUNE)
-
-    return train_ds, val_ds, test_ds
 
 
 def show_augment_per_class(base_dir="dataset_ham_seg", output_dir="augment_output", img_size=(224, 224), samples_per_class=3):
