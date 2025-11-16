@@ -30,8 +30,8 @@ def main():
     path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
     path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
 
-    datasets_output = "./root/preprocessed_datasets2"
-    datasets_segmentation = "./root/segmentation_masks2"
+    datasets_output = "/root/preprocessed_datasets"
+    datasets_segmentation = "/root/segmentation_masks"
     output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(output_experiments, exist_ok=True)
 
@@ -47,7 +47,7 @@ def main():
     # change based on folder you need
     train, val, test = load_ham10000(
             base_dir=datasets_segmentation,
-            img_size=(64, 64),
+            img_size=(224, 224),
             batch_size=32,
             augment=True,
             balance=True,
@@ -60,7 +60,7 @@ def main():
     print(f"total test: {len(test)}")
 
     builder = ModelBuilder(
-        input_shape=(64,64,3), num_classes=7
+        input_shape=(224,224,3), num_classes=7
     )
 
     backbone = builder.build_efficientnet()
