@@ -89,7 +89,7 @@ class SkinDatasetPreprocessor:
     # ============================================================
     #       SAFE & TQDM — APPLY SEGMENTATION MASKS
     # ============================================================
-    def apply_segmentation_masks(self, do_crop=True):
+    def apply_segmentation_masks(self, do_crop=True, size=(224, 224)):
 
         if self.segmentations_dir is None:
             raise ValueError("ERROR: segmentations_dir belum diisi!")
@@ -114,39 +114,38 @@ class SkinDatasetPreprocessor:
             print(f"[PROCESS] {split}...")
             os.makedirs(dst_split_path, exist_ok=True)
 
-            classes = [d for d in os.listdir(src_split_path) if os.path.isdir(os.path.join(src_split_path, d))]
+            classes = [d for d in os.listdir(src_split_path)
+                       if os.path.isdir(os.path.join(src_split_path, d))]
 
             for cls in classes:
                 cls_src = os.path.join(src_split_path, cls)
                 cls_dst = os.path.join(dst_split_path, cls)
                 os.makedirs(cls_dst, exist_ok=True)
 
-                images = [f for f in os.listdir(cls_src) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                images = [f for f in os.listdir(cls_src)
+                          if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
 
-                # TQDM progress bar
                 for fname in tqdm(images, desc=f"{split}/{cls}", ncols=80):
 
                     img_path = os.path.join(cls_src, fname)
                     img = Image.open(img_path).convert("RGB")
                     img_np = np.array(img)
 
+                    # find mask
                     base, _ = os.path.splitext(fname)
                     mask_name = f"{base}_segmentation.png"
                     mask_path = os.path.join(self.segmentations_dir, mask_name)
 
                     if not os.path.isfile(mask_path):
-                        # missing mask
                         continue
 
-                        # load mask
+                    # load mask
                     mask = Image.open(mask_path).convert("L")
                     mask_np = np.array(mask)
                     mask_bool = mask_np > 0
 
-                    # apply mask to RGB channels
                     mask3 = np.repeat(mask_bool[:, :, None], 3, axis=2)
                     result = img_np * mask3
-
                     segmented = Image.fromarray(result)
 
                     # crop bounding box
@@ -157,9 +156,14 @@ class SkinDatasetPreprocessor:
                             y1, y2 = ys.min(), ys.max()
                             segmented = segmented.crop((x1, y1, x2, y2))
 
-                    # save output
+                    # 🔥 **RESIZE DI SINI**
+                    if size is not None:
+                        segmented = segmented.resize(size, Image.Resampling.LANCZOS)
+
+                    # save
                     segmented.save(os.path.join(cls_dst, fname))
 
             print(f"[DONE] {split}")
 
         print("\n=== SEGMENTATION COMPLETE ===\n")
+

@@ -9,8 +9,8 @@ CLASS_NAMES = class_names = class_name = [
 ]
 
 HYPERPARAMS = {
-    "model_name": "efficientnetb3-finetuned-300",
-    "input_shape": (224, 224, 3),
+    "model_name": "YOLOV11m-cls",
+    "input_shape": (640, 640, 3),
     "num_classes": len(CLASS_NAMES),
 
     "optimizer": "Adam",

@@ -10,7 +10,7 @@ from datetime import datetime
 from ultralytics import YOLO
 
 
-def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datasets", output_segmentations_dir="./preprocessed_datasets_segment"):
+def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datasets", output_segmentations_dir="./preprocessed_datasets_segment", size=None):
     """
     Proses preprocessing dataset HAM10000 + segmentation.
     """
@@ -24,7 +24,7 @@ def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datas
     preprocessor.load_csv()
     preprocessor.create_all_datasets()
     # preprocessor.plot_train_distribution()
-    preprocessor.apply_segmentation_masks(True)
+    preprocessor.apply_segmentation_masks(True, size=size)
 
 
 def main():
@@ -32,8 +32,8 @@ def main():
     path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
     path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
 
-    datasets_output = "/root/preprocessed_datasets2"
-    datasets_segmentation = "/root/segmentation_masks2"
+    datasets_output = "/root/preprocessed_datasets3"
+    datasets_segmentation = "/root/segmentation_masks3"
     output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(output_experiments, exist_ok=True)
 
@@ -41,9 +41,10 @@ def main():
         ham_path=path_ham10000,
         segmentations_path=path_segmentations,
         output_dir=datasets_output,
-        output_segmentations_dir=datasets_segmentation
+        output_segmentations_dir=datasets_segmentation,
+        size=HYPERPARAMS["input_shape"][:2]
     )
-    output_root="/root/augmented_balanced_dataset"
+    output_root="/root/augmented_balanced_dataset3"
     path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, )
     model = YOLO("yolo11m-cls.pt")
 
