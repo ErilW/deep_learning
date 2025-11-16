@@ -9,13 +9,13 @@ CLASS_NAMES = class_names = class_name = [
 ]
 
 HYPERPARAMS = {
-    "model_name": "efficientnetb3-finetuned-300",
-    "input_shape": (224, 224, 3),
+    "model_name": "efficientnetb4-64",
+    "input_shape": (64, 64, 3),
     "num_classes": len(CLASS_NAMES),
 
     "optimizer": "Adam",
     "learning_rate": 1e-3,
-    "batch_size": 8,
+    "batch_size": 32,
     "epochs": 50,
     "patience": 10,
 

@@ -47,7 +47,7 @@ def main():
     # change based on folder you need
     train, val, test = load_ham10000(
             base_dir=datasets_segmentation,
-            img_size=(224, 224),
+            img_size=(64, 64),
             batch_size=32,
             augment=True,
             balance=True,
@@ -60,8 +60,7 @@ def main():
     print(f"total test: {len(test)}")
 
     builder = ModelBuilder(
-        HYPERPARAMS["input_shape"],
-        HYPERPARAMS["num_classes"]
+        input_shape=(64,64,3), num_classes=7
     )
 
     backbone = builder.build_efficientnet()
