@@ -512,3 +512,6 @@ def notif():
         print("Pesan berhasil dikirim!")
     else:
         print("Gagal mengirim pesan:", response.text)
+
+if __name__ == "__main__":
+    notif()

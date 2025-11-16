@@ -3,13 +3,12 @@ requests
 kagglehub
 pandas
 matplotlib
-shutil
+#shutil
 tensorflow-addons
-torch 
 opencv-python
 seaborn 
-scikit-learn 
-torch 
+scikit-learn
+#torch
 opencv-python
 tabulate
-tensorflow-addons   
+gdown

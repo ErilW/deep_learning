@@ -28,10 +28,10 @@ def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datas
 def main():
     path_ham10000 = kagglehub.dataset_download("kmader/skin-cancer-mnist-ham10000")
     path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
-    path_segmentations = f"{path_segmentations}\HAM10000_segmentations_lesion_tschandl"
+    path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
 
-    datasets_output = "./root/preprocessed_datasets"
-    datasets_segmentation = "./root/segmentation_masks"
+    datasets_output = "./root/preprocessed_datasets2"
+    datasets_segmentation = "./root/segmentation_masks2"
     output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(output_experiments, exist_ok=True)
 
@@ -74,10 +74,10 @@ def main():
     print("=> Starting Stage 1 training")
     history_stage1 = trainer.train_stage1(train, val)
 
-    # 6) Optional fine-tune
-    if HYPERPARAMS.get("ft_epochs", 0) > 0:
-        print("=> Starting Fine-tuning (Stage 2)")
-        history_ft = trainer.train_stage2(train, val, backbone)
+    # # 6) Optional fine-tune
+    # if HYPERPARAMS.get("ft_epochs", 0) > 0:
+    #     print("=> Starting Fine-tuning (Stage 2)")
+    #     history_ft = trainer.train_stage2(train, val, backbone)
 
     # out_dir = "./saved_models"
     # out_path = os.path.join(out_dir, f"{HYPERPARAMS['model_name']}_final.h5")
@@ -85,7 +85,7 @@ def main():
     # print(f"Model saved to {out_path}")
 
     save_experiments(
-        model,
+        trainer.model,
         history_stage1,
         test,
         CLASS_NAMES,

@@ -16,11 +16,11 @@ HYPERPARAMS = {
     "optimizer": "Adam",
     "learning_rate": 1e-3,
     "batch_size": 8,
-    "epochs": 5,
-    "patience": 2,
+    "epochs": 50,
+    "patience": 10,
 
     "ft_lr": 1e-5,
-    "ft_epochs": 20,
+    "ft_epochs": 50,
     "ft_unfreeze_blocks": 18,
     "ft_weight_decay": 1e-5,
 
@@ -31,7 +31,7 @@ HYPERPARAMS = {
 
 FIT_CONFIG = {
     "epochs": HYPERPARAMS["epochs"],
-    "shuffle": True,
+    "shuffle": False,
     "verbose": 1,
     "validation_data": None,
     "callbacks": None
