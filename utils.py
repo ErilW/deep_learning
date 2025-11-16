@@ -3,6 +3,7 @@ import re
 import time
 from datetime import datetime
 
+import cv2
 import pandas as pd
 import shutil
 
@@ -65,7 +66,7 @@ def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train"
 # =========================================
 # 1. AUGMENTATION PIPELINE
 # =========================================
-def build_augmentation_cv(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
+def build_augmentation_(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
     """Augmentasi sederhana dengan OpenCV: flip, rotate, zoom"""
     h, w = img.shape[:2]
 
@@ -92,7 +93,7 @@ def build_augmentation_cv(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
     return img
 
 
-def load_ham10000_cv(base_dir="dataset", img_size=(224, 224), batch_size=32,
+def load_ham10000(base_dir="dataset", img_size=(224, 224), batch_size=32,
                      augment=True, balance=False, undersample=False, ratio=1.0,
                      class_names=None, shuffle=True):
     if class_names is None:
