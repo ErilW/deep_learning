@@ -35,15 +35,15 @@ class ModelBuilder:
         return [
             tf.keras.layers.GlobalAveragePooling2D(),
 
-            tf.keras.layers.Dense(1024, activation="gelu", kernel_regularizer=self.l2),
+            tf.keras.layers.Dense(1024, activation="relu", kernel_regularizer=self.l2),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.Dropout(0.4),
 
-            tf.keras.layers.Dense(512, activation="gelu", kernel_regularizer=self.l2),
+            tf.keras.layers.Dense(512, activation="relu", kernel_regularizer=self.l2),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.Dropout(0.35),
 
-            tf.keras.layers.Dense(256, activation="gelu", kernel_regularizer=self.l2),
+            tf.keras.layers.Dense(256, activation="relu", kernel_regularizer=self.l2),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.Dropout(0.3),
 
