@@ -43,12 +43,12 @@ def main():
         output_dir=datasets_output,
         output_segmentations_dir=datasets_segmentation
     )
-
-    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root="/root/augmented_balanced_dataset", )
+    output_root="/root/augmented_balanced_dataset"
+    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, )
     model = YOLO("yolo11m-cls.pt")
 
     data = model.train(
-        data=path,
+        data=output_root,
         epochs=HYPERPARAMS["epochs"],
         batch=HYPERPARAMS["batch_size"],
         imgsz=HYPERPARAMS["input_shape"][:2],
