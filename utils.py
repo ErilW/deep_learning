@@ -65,23 +65,110 @@ def create_dataset_by_dx(csv_path, image_root, output_folder, split_type="train"
 # =========================================
 # 1. AUGMENTATION PIPELINE
 # =========================================
-def build_augmentation_layer():
-    return tf.keras.Sequential([
-        # tf.keras.layers.RandomBrightness(0.15),
-        # tf.keras.layers.RandomContrast(0.15),
-        # tf.keras.layers.RandomSaturation(0.1),
-        # tf.keras.layers.RandomHue(0.05),
+def build_augmentation_cv(img, rotate_angle=15, flip_prob=0.5, zoom=0.1):
+    """Augmentasi sederhana dengan OpenCV: flip, rotate, zoom"""
+    h, w = img.shape[:2]
 
-        # sedikit saja rotasi, tidak memotong lesion
-        tf.keras.layers.RandomRotation(0.02, fill_mode="nearest"),
-        tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomZoom(0.1, fill_mode="nearest"),
-        tf.keras.layers.RandomFlip("vertical"),
+    # Horizontal flip
+    if random.random() < flip_prob:
+        img = cv2.flip(img, 1)
 
-        # noise
-        # tf.keras.layers.GaussianNoise(0.02),
-    ])
+    # Vertical flip
+    if random.random() < flip_prob / 2:
+        img = cv2.flip(img, 0)
 
+    # Random rotation
+    angle = random.uniform(-rotate_angle, rotate_angle)
+    M = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1)
+    img = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+
+    # Random zoom
+    if zoom > 0:
+        zx, zy = random.uniform(1 - zoom, 1 + zoom), random.uniform(1 - zoom, 1 + zoom)
+        img = cv2.resize(img, (int(w * zx), int(h * zy)))
+        # crop or pad to original
+        img = cv2.resize(img, (w, h))
+
+    return img
+
+
+def load_ham10000_cv(base_dir="dataset", img_size=(224, 224), batch_size=32,
+                     augment=True, balance=False, undersample=False, ratio=1.0,
+                     class_names=None, shuffle=True):
+    if class_names is None:
+        raise ValueError("class_names harus diisi (list nama kelas).")
+
+    def load_split(split):
+        images, labels = [], []
+        for idx, cls in enumerate(class_names):
+            cls_dir = os.path.join(base_dir, split, cls)
+            if not os.path.isdir(cls_dir):
+                continue
+            for f in os.listdir(cls_dir):
+                if f.lower().endswith((".png", ".jpg", ".jpeg")):
+                    img_path = os.path.join(cls_dir, f)
+                    img = cv2.imread(img_path)
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    img = cv2.resize(img, img_size)
+                    images.append(img)
+                    labels.append(idx)
+        images = np.array(images, dtype=np.float32) / 255.0
+        labels = to_categorical(labels, num_classes=len(class_names))
+        return images, labels
+
+    # Load train/val/test
+    train_images, train_labels = load_split("train")
+    val_images, val_labels = load_split("val")
+    test_images, test_labels = load_split("test")
+
+    # ====================
+    # Balance dataset
+    # ====================
+    if balance:
+        counts = train_labels.sum(axis=0)
+        target = int(max(counts) * ratio)
+        new_imgs, new_lbls = [], []
+        for cls_idx in range(len(class_names)):
+            cls_mask = np.argmax(train_labels, axis=1) == cls_idx
+            cls_imgs = train_images[cls_mask]
+            cls_lbls = train_labels[cls_mask]
+            n = len(cls_imgs)
+            if undersample and n > target:
+                cls_imgs = cls_imgs[:target]
+                cls_lbls = cls_lbls[:target]
+            elif not undersample and n < target:
+                reps = target // n
+                rem = target % n
+                cls_imgs = np.concatenate([cls_imgs] * reps + [cls_imgs[:rem]], axis=0)
+                cls_lbls = np.concatenate([cls_lbls] * reps + [cls_lbls[:rem]], axis=0)
+            new_imgs.append(cls_imgs)
+            new_lbls.append(cls_lbls)
+        train_images = np.concatenate(new_imgs, axis=0)
+        train_labels = np.concatenate(new_lbls, axis=0)
+
+    # ====================
+    # Apply augmentation
+    # ====================
+    if augment:
+        for i in range(len(train_images)):
+            train_images[i] = build_augmentation_cv(train_images[i])
+
+    # ====================
+    # Convert ke tf.data.Dataset
+    # ====================
+    train_ds = tf.data.Dataset.from_tensor_slices((train_images, train_labels))
+    val_ds = tf.data.Dataset.from_tensor_slices((val_images, val_labels))
+    test_ds = tf.data.Dataset.from_tensor_slices((test_images, test_labels))
+
+    if shuffle:
+        train_ds = train_ds.shuffle(4096)
+
+    train_ds = train_ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    val_ds = val_ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    test_ds = test_ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+    print(f"Train: {len(train_images)}, Val: {len(val_images)}, Test: {len(test_images)}")
+    return train_ds, val_ds, test_ds
 def balance_dataset(raw_train, class_counts, ratio=1.0, undersample=False):
     import tensorflow as tf
 
@@ -137,9 +224,6 @@ def balance_dataset(raw_train, class_counts, ratio=1.0, undersample=False):
     final = final.shuffle(4096)
 
     return final
-
-def load_ham10000(base_dir="dataset",img_size=(224,224),batch_size=32,augment=True,balance=False,undersample=False,ratio=1.0,class_names=None):
-
     AUTOTUNE = tf.data.AUTOTUNE
     aug = build_augmentation_layer()
 
