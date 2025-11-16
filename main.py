@@ -63,7 +63,7 @@ def main():
         input_shape=(224,224,3), num_classes=7
     )
 
-    backbone = builder.build_efficientnet()
+    backbone = builder.build_efficientnet_student()
     model = builder.build_model(backbone)
 
     loss = focal_loss(gamma=2.0, alpha=0.25)
