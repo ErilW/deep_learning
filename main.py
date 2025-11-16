@@ -42,7 +42,7 @@ def main():
         output_segmentations_dir=datasets_segmentation
     )
 
-    show_augment_per_class(base_dir=datasets_segmentation, output_dir=output_experiments)
+    # show_augment_per_class(base_dir=datasets_segmentation, output_dir=output_experiments)
 
     # change based on folder you need
     train, val, test = load_ham10000(

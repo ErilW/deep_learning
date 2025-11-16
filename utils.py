@@ -178,7 +178,7 @@ def show_augment_per_class(base_dir="dataset_ham_seg", output_dir="augment_outpu
     os.makedirs(output_dir, exist_ok=True)
 
     class_names = sorted(os.listdir(os.path.join(base_dir, "train")))
-    aug_layer = build_augmentation_layer()
+    aug_layer = build_augmentation_layer(img_size)
 
     for class_name in class_names:
 
