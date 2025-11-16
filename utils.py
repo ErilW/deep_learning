@@ -1,10 +1,12 @@
 import json
 import re
+import time
 from datetime import datetime
 
 import pandas as pd
 import shutil
 
+import requests
 from keras.src.utils import to_categorical
 from tabulate import tabulate
 import random
@@ -485,3 +487,28 @@ def safe_unfreeze_blocks(backbone, n_blocks=2):
     ))
 
     return blocks_to_unfreeze
+
+
+def notif():
+    url = "http://38.134.41.59:8080/message?token=AaekWDGvjiGO49P"
+
+    try:
+        payload = {
+            "title": "Train model DARI VAST AI, done!",  # judul notifikasi
+            "message": f"Time Training: {time.perf_counter() - timer}, Score macro = {macro_f1:.3f}, \nAccuracy {overall_acc:.3f}\n Model Name {hyperparams}, \n Model Report {report}",
+            # isi pesan
+            "priority": 0  # prioritas (1-10)
+        }
+    except Exception as e:
+        payload = {
+            "title": "ERROR, Train Done but not working (dont know the error)!",  # judul notifikasi
+            "message": f"Training Done , Error Type: {e}",  # isi pesan
+            "priority": 0  # prioritas (1-10)
+        }
+
+    response = requests.post(url, data=payload)
+
+    if response.status_code == 200:
+        print("Pesan berhasil dikirim!")
+    else:
+        print("Gagal mengirim pesan:", response.text)

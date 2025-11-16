@@ -4,7 +4,7 @@ from models.model_trainer import ModelTrainer
 from preprocessing import SkinDatasetPreprocessor
 import kagglehub
 import os
-from utils import load_ham10000, focal_loss, show_augment_per_class, save_experiments
+from utils import load_ham10000, focal_loss, show_augment_per_class, save_experiments, notif
 from datetime import datetime
 
 
@@ -93,7 +93,7 @@ def main():
         save_dir=output_experiments
     )
 
-
+    notif()
 
 
 if __name__ == "__main__":
