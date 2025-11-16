@@ -82,173 +82,6 @@ def build_augmentation_layer():
         # tf.keras.layers.GaussianNoise(0.02),
     ])
 
-def save_experiments(model, history, test_ds, class_names, hyperparams,
-                     save_dir=None):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if save_dir is None:
-        save_dir = f"/kaggle/working/experiments_{timestamp}"
-    os.makedirs(save_dir, exist_ok=True)
-
-    # ---- Save Hyperparameters ----
-    with open(os.path.join(save_dir, "hyperparameters.json"), "w") as f:
-        json.dump(hyperparams, f, indent=4)
-
-    # ---- Save Model ----
-    model.save(os.path.join(save_dir, "model_best.h5"))
-
-    # ---- Save Summary ----
-    with open(os.path.join(save_dir, "model_summary.txt"), "w") as f:
-        model.summary(print_fn=lambda x: f.write(x + "\n"))
-
-    # ---- Plot Accuracy ----
-    plt.figure()
-    plt.plot(history.history['accuracy'], label='Train Acc')
-    plt.plot(history.history['val_accuracy'], label='Val Acc')
-    plt.xlabel("Epoch"); plt.ylabel("Accuracy")
-    plt.legend(); plt.title("Train vs Validation Accuracy")
-    plt.savefig(os.path.join(save_dir, "train_val_accuracy.jpg")); plt.close()
-
-    # ---- Plot Loss ----
-    plt.figure()
-    plt.plot(history.history['loss'], label='Train Loss')
-    plt.plot(history.history['val_loss'], label='Val Loss')
-    plt.xlabel("Epoch"); plt.ylabel("Loss")
-    plt.legend(); plt.title("Train vs Validation Loss")
-    plt.savefig(os.path.join(save_dir, "train_val_loss.jpg")); plt.close()
-
-    # ---- Collect Predictions ----
-    y_true, y_pred, y_probs = [], [], []
-    for images, labels in test_ds:
-        preds = model.predict(images, verbose=0)
-        y_probs.extend(preds)
-        y_pred.extend(np.argmax(preds, axis=1))
-        y_true.extend(labels.numpy())
-
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
-    y_probs = np.array(y_probs)
-
-    # ---- Confusion Matrix (Raw) ----
-    cm = confusion_matrix(y_true, y_pred)
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=class_names, yticklabels=class_names)
-    plt.title("Confusion Matrix (Raw)")
-    plt.xlabel("Predicted"); plt.ylabel("True")
-    plt.savefig(os.path.join(save_dir, "confusion_matrix_raw.jpg"))
-    plt.close()
-
-    # ---- Confusion Matrix (Normalized) ----
-    cm_norm = confusion_matrix(y_true, y_pred, normalize='true')
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(cm_norm, annot=True, fmt=".2f", cmap="Blues",
-                xticklabels=class_names, yticklabels=class_names)
-    plt.title("Confusion Matrix (Normalized)")
-    plt.xlabel("Predicted"); plt.ylabel("True")
-    plt.savefig(os.path.join(save_dir, "confusion_matrix_normalized.jpg"))
-    plt.close()
-
-    # ---- Classification Report ----
-    report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
-    with open(os.path.join(save_dir, "classification_report.json"), "w") as f:
-        json.dump(report, f, indent=4)
-
-    # ---- ROC-AUC ----
-    try:
-        y_true_bin = to_categorical(y_true, num_classes=len(class_names))
-        auc_scores = {}
-
-        plt.figure(figsize=(8, 6))
-        for i, cls in enumerate(class_names):
-            fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_probs[:, i])
-            score = auc(fpr, tpr)
-            auc_scores[cls] = score
-            plt.plot(fpr, tpr, label=f"{cls} (AUC={score:.2f})")
-
-        macro_auc = roc_auc_score(y_true_bin, y_probs, average='macro')
-        plt.plot([0,1],[0,1],'k--')
-        plt.title(f"ROC Curve (macro AUC = {macro_auc:.3f})")
-        plt.xlabel("FPR"); plt.ylabel("TPR"); plt.legend()
-        plt.savefig(os.path.join(save_dir, "roc_auc_curve.jpg")); plt.close()
-
-        with open(os.path.join(save_dir, "roc_auc_scores.json"), "w") as f:
-            json.dump({"per_class": auc_scores, "macro_auc": macro_auc}, f, indent=4)
-
-    except Exception as e:
-        print("ROC AUC skipped:", e)
-
-    # ---- SIMPAN HASIL PREDIKSI KE CSV ----
-    results = pd.DataFrame({
-        "true_label": [class_names[i] for i in y_true],
-        "pred_label": [class_names[i] for i in y_pred],
-    })
-    prob_df = pd.DataFrame(y_probs, columns=[f"prob_{c}" for c in class_names])
-    results = pd.concat([results, prob_df], axis=1)
-    results.to_csv(os.path.join(save_dir, "predictions_test.csv"), index=True)
-
-    print(f"✅ Semua hasil disimpan di: {save_dir}")
-
-
-def show_augment_per_class(base_dir="dataset_ham_seg",
-                           output_dir="augment_output",
-                           img_size=(224, 224),
-                           samples_per_class=3):
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    class_names = sorted(os.listdir(os.path.join(base_dir, "train")))
-    aug_layer = build_augmentation_layer()
-
-    for class_name in class_names:
-
-        class_input_path = os.path.join(base_dir, "train", class_name)
-        class_output_path = os.path.join(output_dir, class_name)
-        os.makedirs(class_output_path, exist_ok=True)
-
-        img_files = [f for f in os.listdir(class_input_path)
-                     if f.lower().endswith((".jpg", ".jpeg", ".png"))]
-
-        if len(img_files) == 0:
-            print(f"[WARN] No images in class {class_name}")
-            continue
-
-        # Random sample
-        img_files = random.sample(img_files, min(samples_per_class, len(img_files)))
-
-        print(f"Saving augmentation samples for class: {class_name}")
-
-        for img_file in img_files:
-            img_path = os.path.join(class_input_path, img_file)
-
-            # Load
-            img = tf.keras.preprocessing.image.load_img(img_path, target_size=img_size)
-            img = tf.keras.preprocessing.image.img_to_array(img)
-            img = tf.expand_dims(img, 0) / 255.0
-
-            # Augment 3x
-            aug_images = [
-                img[0],
-                aug_layer(img, training=True)[0],
-                aug_layer(img, training=True)[0],
-                aug_layer(img, training=True)[0],
-            ]
-
-            # Save 4 images: original + 3 aug
-            labels = ["original", "aug1", "aug2", "aug3"]
-
-            for i in range(4):
-                out_path = os.path.join(
-                    class_output_path,
-                    f"{os.path.splitext(img_file)[0]}_{labels[i]}.png"
-                )
-                plt.imsave(out_path, aug_images[i].numpy())
-
-# =========================================
-# 2. OVERSAMPLING / UNDERSAMPLING
-# =========================================
-# =========================================
-# 2. OVERSAMPLING / UNDERSAMPLING (FIXED)
-# =========================================
 def balance_dataset(raw_train, class_counts, ratio=1.0, undersample=False):
     import tensorflow as tf
 
@@ -304,7 +137,6 @@ def balance_dataset(raw_train, class_counts, ratio=1.0, undersample=False):
     final = final.shuffle(4096)
 
     return final
-
 
 def load_ham10000(base_dir="dataset",img_size=(224,224),batch_size=32,augment=True,balance=False,undersample=False,ratio=1.0,class_names=None):
 
@@ -384,6 +216,61 @@ def load_ham10000(base_dir="dataset",img_size=(224,224),batch_size=32,augment=Tr
     ).prefetch(AUTOTUNE)
 
     return train_ds, val_ds, test_ds
+
+
+def show_augment_per_class(base_dir="dataset_ham_seg", output_dir="augment_output", img_size=(224, 224), samples_per_class=3):
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    class_names = sorted(os.listdir(os.path.join(base_dir, "train")))
+    aug_layer = build_augmentation_layer()
+
+    for class_name in class_names:
+
+        class_input_path = os.path.join(base_dir, "train", class_name)
+        class_output_path = os.path.join(output_dir, class_name)
+        os.makedirs(class_output_path, exist_ok=True)
+
+        img_files = [f for f in os.listdir(class_input_path)
+                     if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+
+        if len(img_files) == 0:
+            print(f"[WARN] No images in class {class_name}")
+            continue
+
+        # Random sample
+        img_files = random.sample(img_files, min(samples_per_class, len(img_files)))
+
+        print(f"Saving augmentation samples for class: {class_name}")
+
+        for img_file in img_files:
+            img_path = os.path.join(class_input_path, img_file)
+
+            # Load
+            img = tf.keras.preprocessing.image.load_img(img_path, target_size=img_size)
+            img = tf.keras.preprocessing.image.img_to_array(img)
+            img = tf.expand_dims(img, 0) / 255.0
+
+            # Augment 3x
+            aug_images = [
+                img[0],
+                aug_layer(img, training=True)[0],
+                aug_layer(img, training=True)[0],
+                aug_layer(img, training=True)[0],
+            ]
+
+            # Save 4 images: original + 3 aug
+            labels = ["original", "aug1", "aug2", "aug3"]
+
+            for i in range(4):
+                out_path = os.path.join(
+                    class_output_path,
+                    f"{os.path.splitext(img_file)[0]}_{labels[i]}.png"
+                )
+                plt.imsave(out_path, aug_images[i].numpy())
+
+
+
 
 
 def focal_loss(gamma=2., alpha=0.25):
@@ -512,6 +399,114 @@ def notif():
         print("Pesan berhasil dikirim!")
     else:
         print("Gagal mengirim pesan:", response.text)
+
+def save_experiments(model, history, test_ds, class_names, hyperparams, save_dir=None):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if save_dir is None:
+        save_dir = f"/kaggle/working/experiments_{timestamp}"
+    os.makedirs(save_dir, exist_ok=True)
+
+    # ---- Save Hyperparameters ----
+    with open(os.path.join(save_dir, "hyperparameters.json"), "w") as f:
+        json.dump(hyperparams, f, indent=4)
+
+    # ---- Save Model ----
+    model.save(os.path.join(save_dir, "model_best.h5"))
+
+    # ---- Save Summary ----
+    with open(os.path.join(save_dir, "model_summary.txt"), "w") as f:
+        model.summary(print_fn=lambda x: f.write(x + "\n"))
+
+    # ---- Plot Accuracy ----
+    if history is not None:
+        plt.figure()
+        plt.plot(history.history['accuracy'], label='Train Acc')
+        plt.plot(history.history['val_accuracy'], label='Val Acc')
+        plt.xlabel("Epoch"); plt.ylabel("Accuracy")
+        plt.legend(); plt.title("Train vs Validation Accuracy")
+        plt.savefig(os.path.join(save_dir, "train_val_accuracy.jpg")); plt.close()
+
+        # ---- Plot Loss ----
+        plt.figure()
+        plt.plot(history.history['loss'], label='Train Loss')
+        plt.plot(history.history['val_loss'], label='Val Loss')
+        plt.xlabel("Epoch"); plt.ylabel("Loss")
+        plt.legend(); plt.title("Train vs Validation Loss")
+        plt.savefig(os.path.join(save_dir, "train_val_loss.jpg")); plt.close()
+
+    # ---- Collect Predictions ----
+    y_true, y_pred, y_probs = [], [], []
+    for images, labels in test_ds:
+        preds = model.predict(images, verbose=0)
+        y_probs.extend(preds)
+        y_pred.extend(np.argmax(preds, axis=1))
+        y_true.extend(labels.numpy())
+
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    y_probs = np.array(y_probs)
+
+    # ---- Confusion Matrix (Raw) ----
+    cm = confusion_matrix(y_true, y_pred)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=class_names, yticklabels=class_names)
+    plt.title("Confusion Matrix (Raw)")
+    plt.xlabel("Predicted"); plt.ylabel("True")
+    plt.savefig(os.path.join(save_dir, "confusion_matrix_raw.jpg"))
+    plt.close()
+
+    # ---- Confusion Matrix (Normalized) ----
+    cm_norm = confusion_matrix(y_true, y_pred, normalize='true')
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm_norm, annot=True, fmt=".2f", cmap="Blues",
+                xticklabels=class_names, yticklabels=class_names)
+    plt.title("Confusion Matrix (Normalized)")
+    plt.xlabel("Predicted"); plt.ylabel("True")
+    plt.savefig(os.path.join(save_dir, "confusion_matrix_normalized.jpg"))
+    plt.close()
+
+    # ---- Classification Report ----
+    report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
+    with open(os.path.join(save_dir, "classification_report.json"), "w") as f:
+        json.dump(report, f, indent=4)
+
+    # ---- ROC-AUC ----
+    try:
+        y_true_bin = to_categorical(y_true, num_classes=len(class_names))
+        auc_scores = {}
+
+        plt.figure(figsize=(8, 6))
+        for i, cls in enumerate(class_names):
+            fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_probs[:, i])
+            score = auc(fpr, tpr)
+            auc_scores[cls] = score
+            plt.plot(fpr, tpr, label=f"{cls} (AUC={score:.2f})")
+
+        macro_auc = roc_auc_score(y_true_bin, y_probs, average='macro')
+        plt.plot([0,1],[0,1],'k--')
+        plt.title(f"ROC Curve (macro AUC = {macro_auc:.3f})")
+        plt.xlabel("FPR"); plt.ylabel("TPR"); plt.legend()
+        plt.savefig(os.path.join(save_dir, "roc_auc_curve.jpg")); plt.close()
+
+        with open(os.path.join(save_dir, "roc_auc_scores.json"), "w") as f:
+            json.dump({"per_class": auc_scores, "macro_auc": macro_auc}, f, indent=4)
+
+    except Exception as e:
+        print("ROC AUC skipped:", e)
+
+    # ---- SIMPAN HASIL PREDIKSI KE CSV ----
+    results = pd.DataFrame({
+        "true_label": [class_names[i] for i in y_true],
+        "pred_label": [class_names[i] for i in y_pred],
+    })
+    prob_df = pd.DataFrame(y_probs, columns=[f"prob_{c}" for c in class_names])
+    results = pd.concat([results, prob_df], axis=1)
+    results.to_csv(os.path.join(save_dir, "predictions_test.csv"), index=True)
+
+    print(f"✅ Semua hasil disimpan di: {save_dir}")
+
+
 
 if __name__ == "__main__":
     notif()

@@ -1,5 +1,7 @@
 from datetime import datetime
 import tensorflow as tf
+from keras.src.metrics import Precision, Recall
+
 from models.finetune import Finetuner
 
 
@@ -36,7 +38,11 @@ class ModelTrainer:
         self.model.compile(
             optimizer=optimizer,
             loss=self.loss_fn,
-            metrics=["accuracy"]
+            metrics=[
+                'accuracy',
+                Precision(name='precision'),
+                Recall(name='recall'),
+            ]
         )
 
 
@@ -116,7 +122,11 @@ class ModelTrainer:
         self.model.compile(
             optimizer=optimizer,
             loss=self.loss_fn,
-            metrics=["accuracy"]
+            metrics=[
+                'accuracy',
+                Precision(name='precision'),
+                Recall(name='recall'),
+            ]
         )
 
         callbacks = [
