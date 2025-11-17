@@ -4,7 +4,9 @@ kagglehub
 pandas
 matplotlib
 #shutil
-tensorflow-addons
+#tensorflow-addons
+pillow
+transformers
 opencv-python
 seaborn 
 scikit-learn
@@ -12,3 +14,4 @@ scikit-learn
 opencv-python
 tabulate
 gdown
+albumentations

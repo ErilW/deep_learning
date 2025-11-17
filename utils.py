@@ -27,15 +27,23 @@ import seaborn as sns
 import albumentations as A
 
 yolo_aug = A.Compose([
-    A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=70, val_shift_limit=40, p=0.8),
-    A.ShiftScaleRotate(shift_limit=0.10, scale_limit=0.50, rotate_limit=0, border_mode=0, p=0.9),
-    A.Affine(shear=(-10, 10), p=0.7),
-    A.HorizontalFlip(p=1.0),
-    A.VerticalFlip(p=1.0),
-    # A.Mosaic(p=1.0, metadata_key=),
-    # A.RandAugment(num_ops=2, magnitude=7, p=1.0),
-    # A.CoarseDropout(max_holes=8, max_height=0.3, max_width=0.3, min_holes=1, p=0.4),
+    A.ShiftScaleRotate(
+        shift_limit=0.05,
+        scale_limit=0.10,
+        rotate_limit=5,
+        border_mode=0,
+        p=0.5
+    ),
+
+    A.Affine(
+        shear=(-5, 5),
+        p=0.4
+    ),
+
+    A.HorizontalFlip(p=0.5),
+    A.VerticalFlip(p=0.1),
 ])
+
 
 
 # ============================

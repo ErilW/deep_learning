@@ -32,8 +32,8 @@ def main():
     path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
     path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
 
-    datasets_output = "/root/preprocessed_datasets5"
-    datasets_segmentation = "/root/segmentation_masks5"
+    datasets_output = "./root/preprocessed_datasets5"
+    datasets_segmentation = "./root/segmentation_masks5"
     output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(output_experiments, exist_ok=True)
 
@@ -44,22 +44,36 @@ def main():
         output_segmentations_dir=datasets_segmentation,
         size=HYPERPARAMS["input_shape"][:2]
     )
-    output_root="/root/augmented_balanced_dataset5"
-    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=50 )
-    model = YOLO("yolo11m-cls.pt")
+    output_root="./root/augmented_balanced_dataset3"
+    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio= 2)
+    model = YOLO("yolov8x-cls.pt")
 
     model.train(
-        data=output_root,  # folder classification
-        epochs=30,
-        batch=16,
-        imgsz=640,
-        lr0=0.01,
-        momentum=0.937,
-        weight_decay=0.0005,
-        optimizer="SGD"  # paper biasanya pakai SGD
+        data="./root/augmented_balanced_dataset2",
+        epochs=50,
+        batch=32,
+        imgsz=224,
+        optimizer="SGD",
+        augment=False,
+        patience=10,
+        # MATIKAN SEMUA AUGMENT
+        mosaic=0.0,
+        mixup=0.0,
+        copy_paste=0.0,
+        auto_augment=None,
+        erasing=0.0,
+
+        hsv_h=0.0,
+        hsv_s=0.0,
+        hsv_v=0.0,
+        translate=0.0,
+        scale=0.0,
+        fliplr=0.0,
+        flipud=0.0,
     )
 
-    notif()
+    #
+    # notif()
 
 
 
