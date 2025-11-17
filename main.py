@@ -45,11 +45,11 @@ def main():
         size=HYPERPARAMS["input_shape"][:2]
     )
     output_root="./root/augmented_balanced_dataset3"
-    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio= 2)
-    model = YOLO("yolov8x-cls.pt")
+    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=1)
+    model = YOLO("yolo11x-cls.pt")
 
     model.train(
-        data="./root/augmented_balanced_dataset2",
+        data="./root/augmented_balanced_dataset3",
         epochs=50,
         batch=32,
         imgsz=224,
