@@ -27,23 +27,12 @@ import seaborn as sns
 import albumentations as A
 
 yolo_aug = A.Compose([
-    A.ShiftScaleRotate(
-        shift_limit=0.05,
-        scale_limit=0.10,
-        rotate_limit=5,
-        border_mode=0,
-        p=0.5
-    ),
-
-    A.Affine(
-        shear=(-5, 5),
-        p=0.4
-    ),
-
-    A.HorizontalFlip(p=0.5),
-    A.VerticalFlip(p=0.1),
+    # A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=70, val_shift_limit=40, p=0.8),
+    # A.ShiftScaleRotate(shift_limit=0.10, scale_limit=0.50, rotate_limit=0, border_mode=0, p=0.9),
+    A.Affine(shear=(-10, 10), p=0.7),
+    A.HorizontalFlip(p=1.0),
+    A.VerticalFlip(p=1.0),
 ])
-
 
 
 # ============================
@@ -103,9 +92,9 @@ def create_yolo_balanced_dataset(
                 # CASE 1: DOWNSAMPLING
                 # ---------------------
                 if n > target_per_class:
-                    print(f"  🔽 Downsampling class '{cls}' dari {n} → {target_per_class}")
-                    sampled = random.sample(images, target_per_class)
-                    for img_file in sampled:
+                    # print(f"  🔽 Downsampling class '{cls}' dari {n} → {target_per_class}")
+                    # sampled = random.sample(images, target_per_class)
+                    for img_file in images:
                         shutil.copy(os.path.join(src_cls_dir, img_file),
                                     os.path.join(dst_cls_dir, img_file))
                     continue
