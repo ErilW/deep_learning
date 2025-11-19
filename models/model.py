@@ -1,174 +1,180 @@
 import os
-from PIL import Image
-from tqdm import tqdm
+import random
+import time
+from datetime import datetime
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-
-from transformers import ViTForImageClassification, ViTImageProcessor
+import numpy as np
+import requests
+from ultralytics import YOLO
+from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
 
 
-class ViTTrainer:
-    def __init__(
-        self,
-        model_name="google/vit-base-patch16-224",
-        train_dir="dataset/train",
-        val_dir="dataset/val",
-        batch_size=16,
-        lr=2e-5,
-        num_epochs=5
-    ):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model_name = model_name
-        self.train_dir = train_dir
-        self.val_dir = val_dir
-        self.batch_size = batch_size
-        self.lr = lr
-        self.num_epochs = num_epochs
+def notif(timer, macro_f1,  hyperparams,):
+    url = "http://38.134.41.59:8080/message?token=AaekWDGvjiGO49P"
 
-        # === Load processor (normalize/settings sesuai ViT) ===
-        self.processor = ViTImageProcessor.from_pretrained(model_name)
+    try:
+        elapsed = time.perf_counter() - timer
+        payload = {
+            "title": "Train model DARI VAST AI, done!",
+            "message": f"Time Training: {elapsed}s\n"
+                       f"Macro F1: {macro_f1}\n"
+                       f"Hyperparams: {hyperparams}\n",
+            "priority": 10
+        }
+    except Exception as e:
+        payload = {
+            "title": "ERROR, Train Done but not working!",
+            "message": f"Training Done, Error Type: {e}",
+            "priority": 10
+        }
 
-        # === Dataset transforms ===
-        self.transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=self.processor.image_mean,
-                std=self.processor.image_std
-            )
-        ])
+    try:
+        response = requests.post(url, data=payload)
+        if response.status_code == 200:
+            print("Pesan berhasil dikirim!")
+        else:
+            print("Gagal mengirim pesan:", response.text)
+    except Exception as e:
+        print("Gagal mengirim notifikasi:", e)
 
-        # === Load datasets ===
-        self._load_datasets()
 
-        # === Load model ===
-        self._load_model()
+def evaluate_yolo_classification(model_path, test_dir: str):
+    model = model_path
+    class_names = model.names
+    class_list = [class_names[i] for i in range(len(class_names))]
 
-        # === Optimizer and loss ===
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=self.lr)
-        self.criterion = nn.CrossEntropyLoss()
+    y_true = []
+    y_pred = []
 
-    # ---------------------------------------------------------
-    # Load Dataset
-    # ---------------------------------------------------------
-    def _load_datasets(self):
-        print("Loading dataset...")
+    for class_name in class_list:
+        class_folder = os.path.join(test_dir, class_name)
 
-        self.train_ds = datasets.ImageFolder(self.train_dir, transform=self.transform)
-        self.val_ds = datasets.ImageFolder(self.val_dir, transform=self.transform)
+        if not os.path.isdir(class_folder):
+            print(f"[WARNING] Missing test folder for class: {class_name}")
+            continue
 
-        self.train_loader = DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True)
-        self.val_loader = DataLoader(self.val_ds, batch_size=self.batch_size)
+        for filename in os.listdir(class_folder):
+            img_path = os.path.join(class_folder, filename)
 
-        self.num_classes = len(self.train_ds.classes)
-        print(f"Classes: {self.train_ds.classes}")
-        print(f"Num classes: {self.num_classes}")
+            res = model.predict(img_path, verbose=False)[0]
+            pred_class_idx = res.probs.top1
 
-    # ---------------------------------------------------------
-    # Load ViT pretrained
-    # ---------------------------------------------------------
-    def _load_model(self):
-        print("Loading model...")
+            y_true.append(class_list.index(class_name))
+            y_pred.append(pred_class_idx)
 
-        self.model = ViTForImageClassification.from_pretrained(
-            self.model_name,
-            num_labels=self.num_classes,
-            ignore_mismatched_sizes=True
-        ).to(self.device)
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
 
-    # ---------------------------------------------------------
-    # Training Loop
-    # ---------------------------------------------------------
-    def train(self):
-        print("\n=== Training Start ===")
+    cm = confusion_matrix(y_true, y_pred)
+    macro_f1 = f1_score(y_true, y_pred, average="macro")
 
-        for epoch in range(self.num_epochs):
-            self.model.train()
-            total_loss = 0
+    return cm, macro_f1, class_list
 
-            pbar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.num_epochs}")
-            for imgs, labels in pbar:
-                imgs, labels = imgs.to(self.device), labels.to(self.device)
 
-                outputs = self.model(pixel_values=imgs)
-                loss = self.criterion(outputs.logits, labels)
+SAVE_ROOT = "../runs"
+os.makedirs(SAVE_ROOT, exist_ok=True)
 
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
 
-                total_loss += loss.item()
-                pbar.set_postfix(loss=f"{loss.item():.4f}")
+# FIXED hyperparams you researched
+HYPERPARAM_SPACE = {
+    "lr0": [0.01],
+    "momentum": [0.90],
+    "weight_decay": [0.0001],
+    "optimizer": ["SGD"]
+}
 
-            print(f"Epoch {epoch+1} Average Loss: {total_loss/len(self.train_loader):.4f}")
 
-            self.evaluate()
 
-    # ---------------------------------------------------------
-    # Evaluation
-    # ---------------------------------------------------------
-    def evaluate(self):
-        self.model.eval()
-        correct = 0
-        total = 0
+def random_sample_hyperparams():
+    return {k: random.choice(v) for k, v in HYPERPARAM_SPACE.items()}
 
-        with torch.no_grad():
-            for imgs, labels in self.val_loader:
-                imgs, labels = imgs.to(self.device), labels.to(self.device)
 
-                outputs = self.model(pixel_values=imgs)
-                pred = outputs.logits.argmax(-1)
+def fine_tune_model(base_model_path, train_data_path, test_dir, trial_id, imgsz):
+    hp = random_sample_hyperparams()
+    print(f"Trial {trial_id} hyperparams: {hp}")
 
-                correct += (pred == labels).sum().item()
-                total += labels.size(0)
+    timer = time.perf_counter()
+    model = YOLO(base_model_path)
 
-        acc = correct / total
-        print(f"Validation Accuracy: {acc:.4f}")
-        return acc
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    trial_folder = os.path.join(SAVE_ROOT, f"trial_{trial_id}_{timestamp}")
+    os.makedirs(trial_folder, exist_ok=True)
 
-    # ---------------------------------------------------------
-    # Save Model
-    # ---------------------------------------------------------
-    def save(self, out_dir="vit_finetuned"):
-        os.makedirs(out_dir, exist_ok=True)
-        self.model.save_pretrained(out_dir)
-        self.processor.save_pretrained(out_dir)
-        print(f"Model saved to: {out_dir}")
 
-    # ---------------------------------------------------------
-    # Inference Single Image
-    # ---------------------------------------------------------
-    def predict(self, img_path):
-        self.model.eval()
-        image = Image.open(img_path).convert("RGB")
 
-        inputs = self.processor(images=image, return_tensors="pt").to(self.device)
-
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-
-        pred = outputs.logits.argmax(-1).item()
-        label = self.model.config.id2label[pred]
-        return label
-
-if __name__ == "__main__":
-    trainer = ViTTrainer(
-        model_name="google/vit-base-patch16-224",
-        train_dir="./root/augmented_balanced_dataset5/train",
-        val_dir="./root/augmented_balanced_dataset5/val",
-        batch_size=16,
-        lr=2e-5,
-        num_epochs=20,
-        augment=Fakse
+    model.train(
+        data=train_data_path,
+        epochs=50,
+        device=0,
+        batch=32,
+        patience=10,
+        lr0=hp["lr0"],
+        momentum=hp["momentum"],
+        weight_decay=hp["weight_decay"],
+        optimizer=hp["optimizer"],
+        imgsz=imgsz,
+        # ALL AUGMENT OFF
+        augment=False,
+        mosaic=0.0,
+        mixup=0.0,
+        copy_paste=0.0,
+        auto_augment=None,
+        erasing=0.0,
+        hsv_h=0.0,
+        hsv_s=0.0,
+        hsv_v=0.0,
+        translate=0.0,
+        scale=0.0,
+        fliplr=0.0,
+        flipud=0.0,
+        project=trial_folder,
+        name="finetune"
     )
 
-    trainer.train()
-    trainer.save("vit_custom_model")
+    trained_model_path = os.path.join(trial_folder, "finetune", "weights", "last.pt")
+    trained_model = YOLO(trained_model_path)
 
-    label = trainer.predict("./root/augmented_balanced_dataset5/test/df/")
-    print("Prediksi:", label)
+    cm, macro_f1, cls_list = evaluate_yolo_classification(trained_model, test_dir)
 
+    print(f"\n=== Trial {trial_id} Completed ===")
+    print("Macro F1:", macro_f1)
+    print("Confusion Matrix:\n", cm)
+    print("Class List:\n", cls_list)
+
+    notif(timer=timer, macro_f1=macro_f1, hyperparams=hp)
+    return macro_f1, trial_folder
+
+
+def main():
+    base_model_path = r"yolo11x-cls.pt"
+    train_data_path = "../root/augmented_balanced_dataset2"
+    test_dir = r"../root/augmented_balanced_dataset2/test"
+
+    best_f1 = -1
+    best_folder = None
+
+    # RANDOMIZED BUT SAFE IMGSZ (224–256)
+    imgsz = [224, 240, 256, 300, 400, 500, 640]
+
+    try:
+        for trial, data in enumerate(imgsz):
+            f1, folder = fine_tune_model(
+                base_model_path,
+                train_data_path,
+                test_dir,
+                trial,
+                data
+            )
+            if f1 > best_f1:
+                best_f1 = f1
+                best_folder = folder
+    except Exception as e:
+        print("ERROR:", e)
+
+    print("=" * 60)
+    print(f"BEST MACRO F1 = {best_f1:.4f}")
+    print(f"BEST MODEL FOLDER = {best_folder}")
+
+
+if __name__ == "__main__":
+    main()

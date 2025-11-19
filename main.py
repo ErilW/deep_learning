@@ -5,7 +5,7 @@ from preprocessing import SkinDatasetPreprocessor
 import kagglehub
 import os
 
-from test import evaluate_yolo_classification
+# from test import evaluate_yolo_classification
 from utils import  notif, \
     create_yolo_balanced_dataset
 from datetime import datetime
@@ -30,39 +30,45 @@ def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datas
 
 
 def main():
-    path_ham10000 = kagglehub.dataset_download("kmader/skin-cancer-mnist-ham10000")
-    path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
-    path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
-
-    datasets_output = "./root/preprocessed_datasets5"
-    datasets_segmentation = "./root/segmentation_masks5"
+    # path_ham10000 = kagglehub.dataset_download("kmader/skin-cancer-mnist-ham10000")
+    # path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
+    # path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
+    #
+    # datasets_output = "./root/preprocessed_datasets5"
+    # datasets_segmentation = "./root/segmentation_masks5"
     # output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     # os.makedirs(output_experiments, exist_ok=True)
 
-    preprocessing(
-        ham_path=path_ham10000,
-        segmentations_path=path_segmentations,
-        output_dir=datasets_output,
-        output_segmentations_dir=datasets_segmentation,
-        size=HYPERPARAMS["input_shape"][:2]
-    )
+    # preprocessing(
+    #     ham_path=path_ham10000,
+    #     segmentations_path=path_segmentations,
+    #     output_dir=datasets_output,
+    #     output_segmentations_dir=datasets_segmentation,
+    #     size=HYPERPARAMS["input_shape"][:2]
+    # )
     output_root="./root/augmented_balanced_dataset5"
-    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=2 )
-    model = YOLO("yolov8x-cls.pt")
+    model = YOLO(r"yolo12-cls.pt")
+
+    # path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=2 )
+
+    # mini summary
+    # train 14: balance: 0.5, full aug:0.72
+    # train randomsearch {'lr0': 0.01, 'momentum': 0.9, 'weight_decay': 0.0001, 'optimizer': 'SGD'}, balance: 0.5, half aug: 0.75
+    # train 17 {'lr0': 0.01, 'momentum': 0.9, 'weight_decay': 0.0001, 'optimizer': 'SGD'}, balance: 0.5, full aug: 0.70
+    # train 18 {'lr0': 0.01, 'momentum': 0.9, 'weight_decay': 0.0001, 'optimizer': 'SGD'}, balance: 0.5, half aug, Patience:    None, copy server: 0.70
 
     data = model.train(
         data=output_root,
-        patience=5,
-        epochs=30,
+        patience=20,
+        epochs=100,
         batch=32,
         imgsz=224,
         lr0=0.01,
-        momentum=0.937,
-        weight_decay=0.0005,
+        momentum=0.9,
+        weight_decay=0.0001,
+        device=0,
         optimizer="SGD",
         augment=False,
-        # patience=10,
-        # MATIKAN SEMUA AUGMENT
         mosaic=0.0,
         mixup=0.0,
         copy_paste=0.0,
@@ -77,7 +83,8 @@ def main():
         flipud=0.0,
     )
 
-    notif()
+
+    notif(None, None, None, None, None)
     # evaluate_yolo_classification()
 
 

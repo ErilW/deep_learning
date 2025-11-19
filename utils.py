@@ -454,29 +454,43 @@ def safe_unfreeze_blocks(backbone, n_blocks=2):
     return blocks_to_unfreeze
 
 
-def notif():
+def notif(timer, macro_f1, overall_acc, hyperparams, report=""):
+    """
+    Mengirim notifikasi ke server.
+    - timer: waktu mulai training
+    - macro_f1: nilai Macro F1
+    - overall_acc: akurasi total
+    - hyperparams: dict hyperparameter
+    - report: optional classification report string
+    """
     url = "http://38.134.41.59:8080/message?token=AaekWDGvjiGO49P"
 
     try:
+        elapsed = time.perf_counter() - timer
         payload = {
-            "title": "Train model DARI VAST AI, done!",  # judul notifikasi
-            "message": f"Time Training: {time.perf_counter() - timer}, Score macro = {macro_f1:.3f}, \nAccuracy {overall_acc:.3f}\n Model Name {hyperparams}, \n Model Report {report}",
-            # isi pesan
-            "priority": 0  # prioritas (1-10)
+            "title": "Train model DARI VAST AI, done!",
+            "message": f"Time Training: {elapsed}s\n"
+                       f"Macro F1: {macro_f1}\n"
+                       f"Accuracy: {overall_acc}\n"
+                       f"Hyperparams: {hyperparams}\n"
+                       f"Report:\n{report}",
+            "priority": 10
         }
     except Exception as e:
         payload = {
-            "title": "ERROR, Train Done but not working (dont know the error)!",  # judul notifikasi
-            "message": f"Training Done , Error Type: {e}",  # isi pesan
-            "priority": 0  # prioritas (1-10)
+            "title": "ERROR, Train Done but not working!",
+            "message": f"Training Done, Error Type: {e}",
+            "priority": 10
         }
 
-    response = requests.post(url, data=payload)
-
-    if response.status_code == 200:
-        print("Pesan berhasil dikirim!")
-    else:
-        print("Gagal mengirim pesan:", response.text)
+    try:
+        response = requests.post(url, data=payload)
+        if response.status_code == 200:
+            print("Pesan berhasil dikirim!")
+        else:
+            print("Gagal mengirim pesan:", response.text)
+    except Exception as e:
+        print("Gagal mengirim notifikasi:", e)
 
 def save_experiments(model, history, test_ds, class_names, hyperparams, save_dir=None):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
