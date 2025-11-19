@@ -49,7 +49,7 @@ def main():
     output_root="./root/augmented_balanced_dataset5"
     model = YOLO(r"yolo11x-cls.pt")
 
-    path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=2 )
+    # path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=2 )
 
     # mini summary
     # train 14: balance: 0.5, full aug:0.72
@@ -61,7 +61,7 @@ def main():
         data=output_root,
         patience=20,
         epochs=100,
-        batch=32,
+        batch=16,
         imgsz=640,
         lr0=0.01,
         momentum=0.9,
