@@ -10,6 +10,11 @@ from torch import nn
 from ultralytics import YOLO
 from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
 
+
+# ============================================================
+# FIXED FOCAL LOSS + ADAPTER UNTUK YOLO-CLS
+# ============================================================
+
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2.0):
         super().__init__()
@@ -23,14 +28,25 @@ class FocalLoss(nn.Module):
         focal = self.alpha * (1 - pt) ** self.gamma * ce_loss
         return focal.mean()
 
+
+# YOLO classification expects criterion.f(logits, targets)
+class FocalLossAdapter:
+    def __init__(self, alpha=0.25, gamma=2.0):
+        self.loss_fn = FocalLoss(alpha=alpha, gamma=gamma)
+
+    def f(self, logits, targets):
+        return self.loss_fn(logits, targets)
+
+
 def on_setup(trainer):
     m = getattr(trainer.model, "model", trainer.model)
-    m.criterion = FocalLoss(alpha=0.25, gamma=2.0)
+    m.criterion = FocalLossAdapter(alpha=0.25, gamma=2.0)
 
-    # YOLO classification default only uses CE loss (single term)
-    trainer.loss_names = ["loss"]   # bukan "fl"
+    trainer.loss_names = ["loss"]
+# ============================================================
 
-def notif(timer, macro_f1,  hyperparams,):
+
+def notif(timer, macro_f1, hyperparams):
     url = "http://38.134.41.59:8080/message?token=AaekWDGvjiGO49P"
 
     try:
@@ -96,14 +112,12 @@ SAVE_ROOT = "../runs"
 os.makedirs(SAVE_ROOT, exist_ok=True)
 
 
-# FIXED hyperparams you researched
 HYPERPARAM_SPACE = {
     "lr0": [0.01],
     "momentum": [0.90],
     "weight_decay": [0.0001],
     "optimizer": ["SGD"]
 }
-
 
 
 def random_sample_hyperparams():
@@ -121,20 +135,19 @@ def fine_tune_model(base_model_path, train_data_path, test_dir, trial_id, imgsz)
     trial_folder = os.path.join(SAVE_ROOT, f"trial_{trial_id}_{timestamp}")
     os.makedirs(trial_folder, exist_ok=True)
 
-    model.add_callback("on_train_start",on_setup)
+    model.add_callback("on_train_start", on_setup)
 
     model.train(
         data=train_data_path,
         epochs=50,
         device=0,
-        batch=32,
+        batch=8,
         patience=10,
         lr0=hp["lr0"],
         momentum=hp["momentum"],
         weight_decay=hp["weight_decay"],
         optimizer=hp["optimizer"],
         imgsz=imgsz,
-        # ALL AUGMENT OFF
         augment=False,
         mosaic=0.0,
         mixup=0.0,
@@ -154,11 +167,9 @@ def fine_tune_model(base_model_path, train_data_path, test_dir, trial_id, imgsz)
     )
 
     trained_model_path = os.path.join(trial_folder, "finetune", "weights", "last.pt")
-    trained_model_path2 = os.path.join(trial_folder, "finetune", "weights", "best.pt")
     trained_model = YOLO(trained_model_path)
 
     cm, macro_f1, cls_list = evaluate_yolo_classification(trained_model, test_dir)
-    cm2, macro_f12, cls_list2 = evaluate_yolo_classification(trained_model, test_dir)
 
     print(f"\n=== Trial {trial_id} Completed ===")
     print("Macro F1:", macro_f1)
@@ -166,7 +177,6 @@ def fine_tune_model(base_model_path, train_data_path, test_dir, trial_id, imgsz)
     print("Class List:\n", cls_list)
 
     notif(timer=timer, macro_f1=macro_f1, hyperparams=cm)
-    notif(timer=timer, macro_f1=macro_f12, hyperparams=cm2)
     return macro_f1, trial_folder
 
 
@@ -178,8 +188,7 @@ def main():
     best_f1 = -1
     best_folder = None
 
-    # RANDOMIZED BUT SAFE IMGSZ (224–256)
-    imgsz = [640]
+    imgsz = [320]
 
     try:
         for trial, data in enumerate(imgsz):
