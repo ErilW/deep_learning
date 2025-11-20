@@ -7,7 +7,13 @@ import numpy as np
 import requests
 from ultralytics import YOLO
 from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
+from ultralytics.utils.loss import FocalLoss
 
+
+def on_setup(trainer):
+    m = getattr(trainer.model, "model", trainer.model)
+    m.criterion = FocalLoss(gamma=2.0, alpha=0.25)
+    trainer.loss_names = ["fl"]
 
 def notif(timer, macro_f1,  hyperparams,):
     url = "http://38.134.41.59:8080/message?token=AaekWDGvjiGO49P"
@@ -100,7 +106,7 @@ def fine_tune_model(base_model_path, train_data_path, test_dir, trial_id, imgsz)
     trial_folder = os.path.join(SAVE_ROOT, f"trial_{trial_id}_{timestamp}")
     os.makedirs(trial_folder, exist_ok=True)
 
-
+    model.add_callback("on_train_start",on_setup)
 
     model.train(
         data=train_data_path,
@@ -132,16 +138,20 @@ def fine_tune_model(base_model_path, train_data_path, test_dir, trial_id, imgsz)
     )
 
     trained_model_path = os.path.join(trial_folder, "finetune", "weights", "last.pt")
+    trained_model_path2 = os.path.join(trial_folder, "finetune", "weights", "best.pt")
     trained_model = YOLO(trained_model_path)
+    trained_model_best = YOLO(trained_model_path2)
 
     cm, macro_f1, cls_list = evaluate_yolo_classification(trained_model, test_dir)
+    cm2, macro_f12, cls_list2 = evaluate_yolo_classification(trained_model, test_dir)
 
     print(f"\n=== Trial {trial_id} Completed ===")
     print("Macro F1:", macro_f1)
     print("Confusion Matrix:\n", cm)
     print("Class List:\n", cls_list)
 
-    notif(timer=timer, macro_f1=macro_f1, hyperparams=hp)
+    notif(timer=timer, macro_f1=macro_f1, hyperparams=cm)
+    notif(timer=timer, macro_f1=macro_f12, hyperparams=cm2)
     return macro_f1, trial_folder
 
 
@@ -154,7 +164,7 @@ def main():
     best_folder = None
 
     # RANDOMIZED BUT SAFE IMGSZ (224–256)
-    imgsz = [224, 240, 256, 300, 400, 500, 640]
+    imgsz = [640]
 
     try:
         for trial, data in enumerate(imgsz):

@@ -601,4 +601,18 @@ def save_experiments(model, history, test_ds, class_names, hyperparams, save_dir
 
 
 if __name__ == "__main__":
-    notif()
+    from ultralytics import YOLO
+    from ultralytics.utils.loss import FocalLoss
+
+    model = YOLO("yolo11n-cls.pt")
+
+
+    def on_setup(trainer):
+        m = getattr(trainer.model, "model", trainer.model)
+        m.criterion = FocalLoss(gamma=2.0, alpha=0.25)
+        trainer.loss_names = ["fl"]
+
+
+    model.add_callback("on_train_start", on_setup)
+
+    model.train( data=r"C:\Users\eril.sanjaya\Documents\eril\deep_learning\root\augmented_balanced_dataset4",epochs=20)
