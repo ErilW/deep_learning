@@ -92,18 +92,45 @@ class Trainer:
         self.class_names = class_names
 
         self.criterion = FocalLoss(weight=class_weights.to(device))
-        self.optimizer = optim.Adam(model.parameters(), lr=1e-4)
+        # initial optimizer will be set after freezing backbone (only classifier params)
+        self.optimizer = None
 
         self.best_f1 = -1
 
         os.makedirs(save_dir, exist_ok=True)
+        self.freeze_backbone()
+
+        # optimizer hanya melatih classifier dulu
+        trainable = filter(lambda p: p.requires_grad, self.model.parameters())
+        self.optimizer = optim.Adam(trainable, lr=1e-4, weight_decay=1e-5)
 
     # -----------------------------------------------
+
+    def freeze_backbone(self):
+        # freeze all except classifier/fc/head layers (robust name check)
+        keywords = ("classifier", "fc", "head", "linear")
+        for name, param in self.model.named_parameters():
+            if any(k in name.lower() for k in keywords):
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+
+    def unfreeze_backbone(self):
+        for param in self.model.parameters():
+            param.requires_grad = True
+
     def train(self, epochs=3):
         print(f"\n🚀 Device digunakan: {self.device.upper()}")
         history = {"train_loss": [], "val_loss": [], "f1_macro": []}
 
         for epoch in range(epochs):
+            # Unfreeze & lower LR at epoch == 5 (i.e. after finishing epoch 0..4)
+            if epoch == 5:
+                print("🔓 Unfreezing backbone & lowering LR...")
+                self.unfreeze_backbone()
+                # reset optimizer to include all parameters with a smaller LR
+                self.optimizer = optim.Adam(self.model.parameters(), lr=1e-5, weight_decay=1e-5)
+
             self.model.train()
             total_loss = 0
 
@@ -175,10 +202,12 @@ class Trainer:
         # metrics
         acc = accuracy_score(trues, preds)
         prec, rec, f1, support = precision_recall_fscore_support(trues, preds, zero_division=0)
+        macro_f1 = f1_score(trues, preds, average="macro")
 
         report = classification_report(trues, preds, target_names=self.class_names)
         print("\n===== TEST METRICS =====")
         print(report)
+        print(f"Accuracy: {acc:.4f}  Macro F1: {macro_f1:.4f}")
 
         with open(f"{self.save_dir}/classification_report.txt", "w") as f:
             f.write(report)
