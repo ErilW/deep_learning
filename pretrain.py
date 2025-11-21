@@ -130,7 +130,7 @@ class Trainer:
 
         for epoch in range(epochs):
             # Unfreeze & lower LR at epoch == 5 (i.e. after finishing epoch 0..4)
-            if epoch == 10:
+            if epoch == 5:
                 print("🔓 Unfreezing backbone & lowering LR...")
                 self.unfreeze_backbone()
                 # reset optimizer to include all parameters with a smaller LR
@@ -275,9 +275,9 @@ if __name__ == "__main__":
 
     model_names = [
         "convnext",
-        "efficientnet_b3",
-        "efficientnet_v2_s",
-        "efficientnet_v2_m",
+        # "efficientnet_b3",
+        # "efficientnet_v2_s",
+        # "efficientnet_v2_m",
         "efficientnet_v2_l",
     ]
 
@@ -299,7 +299,7 @@ if __name__ == "__main__":
             class_names=class_names
         )
 
-        history = trainer.train(epochs=50)
+        history = trainer.train(epochs=20)
 
         summary_results.append([
             model_name,
