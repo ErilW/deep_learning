@@ -34,8 +34,8 @@ def main():
     path_segmentations = kagglehub.dataset_download("tschandl/ham10000-lesion-segmentations")
     path_segmentations = f"{path_segmentations}/HAM10000_segmentations_lesion_tschandl"
 
-    datasets_output = "./root/preprocessed_datasets5"
-    datasets_segmentation = "./root/segmentation_masks5"
+    datasets_output = "./root/preprocessed_datasets"
+    datasets_segmentation = "./root/segmentation_masks"
     output_experiments = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(output_experiments, exist_ok=True)
 
@@ -46,8 +46,8 @@ def main():
         output_segmentations_dir=datasets_segmentation,
         size=None
     )
-    output_root="./root/augmented_balanced_dataset5"
-    model = YOLO(r"yolo11x-cls.pt")
+    # output_root="./root/augmented_balanced_dataset5"
+    # model = YOLO(r"yolo11x-cls.pt")
 
     # path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=2 )
 
@@ -57,31 +57,31 @@ def main():
     # train 17 {'lr0': 0.01, 'momentum': 0.9, 'weight_decay': 0.0001, 'optimizer': 'SGD'}, balance: 0.5, full aug: 0.70
     # train 18 {'lr0': 0.01, 'momentum': 0.9, 'weight_decay': 0.0001, 'optimizer': 'SGD'}, balance: 0.5, half aug, Patience:    None, copy server: 0.70
 
-    data = model.train(
-        data=output_root,
-        patience=20,
-        epochs=100,
-        batch=16,
-        imgsz=640,
-        lr0=0.01,
-        momentum=0.9,
-        weight_decay=0.0001,
-        device=0,
-        optimizer="SGD",
-        augment=False,
-        mosaic=0.0,
-        mixup=0.0,
-        copy_paste=0.0,
-        auto_augment=None,
-        erasing=0.0,
-        hsv_h=0.0,
-        hsv_s=0.0,
-        hsv_v=0.0,
-        translate=0.0,
-        scale=0.0,
-        fliplr=0.0,
-        flipud=0.0,
-    )
+    # data = model.train(
+    #     data=output_root,
+    #     patience=20,
+    #     epochs=100,
+    #     batch=16,
+    #     imgsz=640,
+    #     lr0=0.01,
+    #     momentum=0.9,
+    #     weight_decay=0.0001,
+    #     device=0,
+    #     optimizer="SGD",
+    #     augment=False,
+    #     mosaic=0.0,
+    #     mixup=0.0,
+    #     copy_paste=0.0,
+    #     auto_augment=None,
+    #     erasing=0.0,
+    #     hsv_h=0.0,
+    #     hsv_s=0.0,
+    #     hsv_v=0.0,
+    #     translate=0.0,
+    #     scale=0.0,
+    #     fliplr=0.0,
+    #     flipud=0.0,
+    # )
 
 
     notif(None, None, None, None, None)
