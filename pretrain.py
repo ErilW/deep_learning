@@ -267,7 +267,7 @@ if __name__ == "__main__":
             class_names=class_names
         )
 
-        history = trainer.train(epochs=3)
+        history = trainer.train(epochs=10)
 
         summary_results.append([
             model_name,
