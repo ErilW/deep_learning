@@ -4,225 +4,225 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms, models
-from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.metrics import f1_score, confusion_matrix
 import matplotlib.pyplot as plt
+import seaborn as sns
 import numpy as np
-import itertools
+from datetime import datetime
 
-# ============================================================
-# CONFIG
-# ============================================================
-DATA_ROOT = "./root/segmentation_masks"
-BATCH_SIZE = 16
-EPOCHS = 3
-LR = 1e-4
-INPUT_SIZE = 224
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-# ============================================================
-# TRANSFORMS (NO AUGMENTATION)
-# ============================================================
-tfm = transforms.Compose([
-    transforms.Resize((INPUT_SIZE, INPUT_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485,0.456,0.406], [0.229,0.224,0.225])
-])
-
-# ============================================================
-# LOAD DATASET
-# ============================================================
-train_ds = datasets.ImageFolder(os.path.join(DATA_ROOT, "train"), transform=tfm)
-val_ds   = datasets.ImageFolder(os.path.join(DATA_ROOT, "val"), transform=tfm)
-test_ds  = datasets.ImageFolder(os.path.join(DATA_ROOT, "test"), transform=tfm)
-
-train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
-test_loader  = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
-
-num_classes = len(train_ds.classes)
-
-# ============================================================
-# CLASS WEIGHTS
-# ============================================================
-from collections import Counter
-counts = Counter([y for _, y in train_ds.samples])
-total = sum(counts.values())
-class_weights = torch.tensor(
-    [total / (counts[i] * num_classes) for i in range(num_classes)],
-    dtype=torch.float
-).to(DEVICE)
-
-# ============================================================
-# FOCAL LOSS
-# ============================================================
+# -----------------------------
+# Focal Loss
+# -----------------------------
 class FocalLoss(nn.Module):
     def __init__(self, weight=None, gamma=2.0):
         super().__init__()
         self.gamma = gamma
         self.weight = weight
+        self.ce = nn.CrossEntropyLoss(weight=weight)
 
     def forward(self, logits, targets):
-        ce = nn.functional.cross_entropy(logits, targets, weight=self.weight, reduction='none')
-        pt = torch.exp(-ce)
-        focal = ((1 - pt) ** self.gamma) * ce
-        return focal.mean()
+        logpt = -self.ce(logits, targets)
+        pt = torch.exp(logpt)
+        loss = -((1 - pt) ** self.gamma) * logpt
+        return loss.mean()
 
-criterion = FocalLoss(weight=class_weights)
 
-# ============================================================
-# MODEL LIST
-# ============================================================
-model_zoo = {
-    "resnet50": models.resnet50,
-    "densenet121": models.densenet121,
-    "convnext_tiny": models.convnext_tiny,
-    "efficientnet_b3": models.efficientnet_b3,
-    "efficientnet_b4": models.efficientnet_b4,
-    "efficientnet_b5": models.efficientnet_b5,
-    "efficientnet_b6": models.efficientnet_b6,
-    "efficientnet_b7": models.efficientnet_b7,
-    "efficientnet_v2_s": models.efficientnet_v2_s,
-    "efficientnet_v2_m": models.efficientnet_v2_m,
-    "inception_v3": models.inception_v3
-}
+# -----------------------------
+# Model Factory
+# -----------------------------
+class ModelFactory:
+    def __init__(self, num_classes):
+        self.num_classes = num_classes
 
-# ============================================================
-# HELPER FOR CONFUSION MATRIX SAVE
-# ============================================================
-def save_confusion_matrix(cm, classes, save_path, title):
-    plt.figure(figsize=(8,8))
-    plt.imshow(cm, cmap="Blues")
-    plt.title(title)
-    plt.colorbar()
+    def create(self, name):
+        name = name.lower()
 
-    ticks = np.arange(len(classes))
-    plt.xticks(ticks, classes, rotation=45)
-    plt.yticks(ticks, classes)
+        if name == "convnext":
+            model = models.convnext_tiny(weights="IMAGENET1K_V1")
+            in_feat = model.classifier[2].in_features
+            model.classifier[2] = nn.Linear(in_feat, self.num_classes)
 
-    thresh = cm.max() / 2.0
-    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-        plt.text(j, i, str(cm[i, j]),
-                 horizontalalignment="center",
-                 color="white" if cm[i, j] > thresh else "black")
-    plt.ylabel("True")
-    plt.xlabel("Predicted")
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
+        elif name == "efficientnet_b3":
+            model = models.efficientnet_b3(weights="IMAGENET1K_V1")
+            in_feat = model.classifier[1].in_features
+            model.classifier[1] = nn.Linear(in_feat, self.num_classes)
 
-# ============================================================
-# TRAIN LOOP
-# ============================================================
-def train_one_model(model_name, builder):
-    print(f"\n===== TRAINING: {model_name} =====")
+        elif name == "efficientnet_b7":
+            model = models.efficientnet_b7(weights="IMAGENET1K_V1")
+            in_feat = model.classifier[1].in_features
+            model.classifier[1] = nn.Linear(in_feat, self.num_classes)
 
-    model = builder(pretrained=True)
+        elif name == "efficientnet_v2_s":
+            model = models.efficientnet_v2_s(weights="IMAGENET1K_V1")
+            in_feat = model.classifier[1].in_features
+            model.classifier[1] = nn.Linear(in_feat, self.num_classes)
 
-    # replace classifier/fc
-    if hasattr(model, "fc"):
-        model.fc = nn.Linear(model.fc.in_features, num_classes)
-    elif hasattr(model, "classifier") and isinstance(model.classifier, nn.Linear):
-        model.classifier = nn.Linear(model.classifier.in_features, num_classes)
-    elif "inception" in model_name:
-        model.AuxLogits.fc = nn.Linear(model.AuxLogits.fc.in_features, num_classes)
-        model.fc = nn.Linear(model.fc.in_features, num_classes)
+        elif name == "efficientnet_v2_m":
+            model = models.efficientnet_v2_m(weights="IMAGENET1K_V1")
+            in_feat = model.classifier[1].in_features
+            model.classifier[1] = nn.Linear(in_feat, self.num_classes)
 
-    model = model.to(DEVICE)
-    optimizer = optim.Adam(model.parameters(), lr=LR)
+        elif name == "inception":
+            model = models.inception_v3(weights="IMAGENET1K_V1")
+            in_feat = model.fc.in_features
+            model.fc = nn.Linear(in_feat, self.num_classes)
 
-    history = {"train_loss": [], "val_loss": [], "val_f1": []}
+        elif name == "resnet50":
+            model = models.resnet50(weights="IMAGENET1K_V2")
+            in_feat = model.fc.in_features
+            model.fc = nn.Linear(in_feat, self.num_classes)
 
-    for epoch in range(EPOCHS):
-        model.train()
-        running_loss = 0
+        elif name == "densenet":
+            model = models.densenet121(weights="IMAGENET1K_V1")
+            in_feat = model.classifier.in_features
+            model.classifier = nn.Linear(in_feat, self.num_classes)
 
-        for x, y in train_loader:
-            x, y = x.to(DEVICE), y.to(DEVICE)
-            optimizer.zero_grad()
-            out = model(x)
-            if model_name == "inception_v3":
-                out, aux = out
-                loss = criterion(out, y) + 0.4 * criterion(aux, y)
-            else:
-                loss = criterion(out, y)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item() * x.size(0)
+        else:
+            raise ValueError("Unknown model: " + name)
 
-        train_loss = running_loss / len(train_ds)
+        return model
 
-        # VALIDATION
-        model.eval()
-        all_y = []
-        all_p = []
-        val_loss = 0
+
+# -----------------------------
+# Trainer Class
+# -----------------------------
+class Trainer:
+    def __init__(self, model, train_loader, val_loader, device, class_weights, save_dir):
+        self.model = model.to(device)
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.device = device
+        self.save_dir = save_dir
+
+        self.criterion = FocalLoss(weight=class_weights.to(device))
+        self.optimizer = optim.Adam(model.parameters(), lr=1e-4)
+
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+    def train(self, epochs=3):
+        history = {"train_loss": [], "val_loss": [], "f1_macro": []}
+
+        for epoch in range(epochs):
+            self.model.train()
+            total_loss = 0
+
+            for imgs, labels in self.train_loader:
+                imgs, labels = imgs.to(self.device), labels.to(self.device)
+                self.optimizer.zero_grad()
+
+                outputs = self.model(imgs)
+                loss = self.criterion(outputs, labels)
+
+                loss.backward()
+                self.optimizer.step()
+                total_loss += loss.item()
+
+            val_loss, f1_macro = self.evaluate()
+            history["train_loss"].append(total_loss / len(self.train_loader))
+            history["val_loss"].append(val_loss)
+            history["f1_macro"].append(f1_macro)
+
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss {total_loss:.4f} | Val F1 {f1_macro:.4f}")
+
+        self.save_history(history)
+        return history
+
+    def evaluate(self):
+        self.model.eval()
+        total_loss = 0
+        preds = []
+        trues = []
 
         with torch.no_grad():
-            for x, y in val_loader:
-                x, y = x.to(DEVICE), y.to(DEVICE)
-                out = model(x)
-                if model_name == "inception_v3":
-                    out = out[0]
-                loss = criterion(out, y).item()
-                val_loss += loss * x.size(0)
+            for imgs, labels in self.val_loader:
+                imgs, labels = imgs.to(self.device), labels.to(self.device)
+                outputs = self.model(imgs)
+                loss = self.criterion(outputs, labels)
+                total_loss += loss.item()
 
-                preds = out.argmax(1).cpu().numpy()
-                all_p.extend(preds)
-                all_y.extend(y.cpu().numpy())
+                preds.extend(torch.argmax(outputs, dim=1).cpu().numpy())
+                trues.extend(labels.cpu().numpy())
 
-        val_loss /= len(val_ds)
-        f1 = f1_score(all_y, all_p, average="macro")
+        f1_macro = f1_score(trues, preds, average="macro")
+        self.save_confusion(trues, preds)
+        return total_loss / len(self.val_loader), f1_macro
 
-        history["train_loss"].append(train_loss)
-        history["val_loss"].append(val_loss)
-        history["val_f1"].append(f1)
+    def save_confusion(self, y_true, y_pred):
+        cm = confusion_matrix(y_true, y_pred)
+        plt.figure(figsize=(6,5))
+        sns.heatmap(cm, annot=True, cmap="Blues", fmt="d")
+        plt.title("Confusion Matrix")
+        plt.savefig(f"{self.save_dir}/confusion_matrix.png")
+        plt.close()
 
-        print(f"[{model_name}] Epoch {epoch+1}/{EPOCHS}  "
-              f"TrainLoss={train_loss:.4f}  ValLoss={val_loss:.4f}  F1={f1:.4f}")
-
-    # ============================================================
-    # EVALUATE ON TEST SET + SAVE OUTPUTS
-    # ============================================================
-    model.eval()
-    all_y = []
-    all_p = []
-    with torch.no_grad():
-        for x, y in test_loader:
-            x, y = x.to(DEVICE), y.to(DEVICE)
-            out = model(x)
-            if model_name == "inception_v3":
-                out = out[0]
-            preds = out.argmax(1).cpu().numpy()
-            all_p.extend(preds)
-            all_y.extend(y.cpu().numpy())
-
-    cm = confusion_matrix(all_y, all_p)
-
-    # output folder
-    out_dir = f"./results_{model_name}"
-    os.makedirs(out_dir, exist_ok=True)
-
-    # save cm
-    save_confusion_matrix(cm, train_ds.classes,
-                          os.path.join(out_dir, "confusion_matrix.png"),
-                          f"CM {model_name}")
-
-    # save history plot
-    plt.plot(history["train_loss"], label="train_loss")
-    plt.plot(history["val_loss"], label="val_loss")
-    plt.plot(history["val_f1"], label="val_f1")
-    plt.legend()
-    plt.xlabel("Epoch")
-    plt.savefig(os.path.join(out_dir, "history.png"))
-    plt.close()
-
-    torch.save(model.state_dict(), os.path.join(out_dir, "model.pth"))
-
-    return history
+    def save_history(self, history):
+        plt.figure(figsize=(7,5))
+        plt.plot(history["train_loss"], label="Train Loss")
+        plt.plot(history["val_loss"], label="Val Loss")
+        plt.legend()
+        plt.title("Training History")
+        plt.savefig(f"{self.save_dir}/history.png")
+        plt.close()
 
 
-# ============================================================
-# MAIN LOOP: RUN ALL MODELS
-# ============================================================
-for name, builder in model_zoo.items():
-    train_one_model(name, builder)
+# -----------------------------
+# MAIN RUNNER
+# -----------------------------
+def load_datasets(root):
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ])
+
+    train = datasets.ImageFolder(os.path.join(root, "train"), transform=transform)
+    val   = datasets.ImageFolder(os.path.join(root, "val"), transform=transform)
+    test  = datasets.ImageFolder(os.path.join(root, "test"), transform=transform)
+
+    return train, val, test
+
+
+def compute_class_weights(dataset):
+    labels = [y for _, y in dataset]
+    labels = torch.tensor(labels)
+    class_count = torch.bincount(labels)
+    weights = 1.0 / class_count.float()
+    return weights
+
+
+if __name__ == "__main__":
+    root = "./root/segmentation_masks"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    train_set, val_set, test_set = load_datasets(root)
+    weights = compute_class_weights(train_set)
+
+    train_loader = DataLoader(train_set, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=16, shuffle=False)
+
+    model_names = [
+        "convnext",
+        "efficientnet_b3",
+        "efficientnet_b7",
+        "efficientnet_v2_s",
+        "efficientnet_v2_m",
+        "inception",
+        "resnet50",
+        "densenet"
+    ]
+
+    factory = ModelFactory(num_classes=len(train_set.classes))
+
+    for model_name in model_names:
+        print(f"\n===== TRAINING {model_name.upper()} =====")
+        model = factory.create(model_name)
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            device=device,
+            class_weights=weights,
+            save_dir=f"./results_{model_name}"
+        )
+        trainer.train(epochs=3)
+
