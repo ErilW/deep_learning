@@ -62,6 +62,11 @@ class ModelFactory:
             in_feat = model.classifier[1].in_features
             model.classifier[1] = nn.Linear(in_feat, self.num_classes)
 
+        elif name == "efficientnet_v2_m":
+            model = models.efficientnet_v2_l(weights="IMAGENET1K_V1")
+            in_feat = model.classifier[1].in_features
+            model.classifier[1] = nn.Linear(in_feat, self.num_classes)
+
         elif name == "resnet50":
             model = models.resnet50(weights="IMAGENET1K_V2")
             in_feat = model.fc.in_features
@@ -125,7 +130,7 @@ class Trainer:
 
         for epoch in range(epochs):
             # Unfreeze & lower LR at epoch == 5 (i.e. after finishing epoch 0..4)
-            if epoch == 5:
+            if epoch == 10:
                 print("🔓 Unfreezing backbone & lowering LR...")
                 self.unfreeze_backbone()
                 # reset optimizer to include all parameters with a smaller LR
@@ -264,18 +269,16 @@ if __name__ == "__main__":
 
     weights = compute_class_weights(train_set)
 
-    train_loader = DataLoader(train_set, batch_size=16, shuffle=True, num_workers=4)
-    val_loader   = DataLoader(val_set, batch_size=16, shuffle=False, num_workers=4)
-    test_loader  = DataLoader(test_set, batch_size=16, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=8)
+    val_loader   = DataLoader(val_set, batch_size=64, shuffle=False, num_workers=8)
+    test_loader  = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=8)
 
     model_names = [
         "convnext",
         "efficientnet_b3",
-        "efficientnet_b7",
         "efficientnet_v2_s",
         "efficientnet_v2_m",
-        "resnet50",
-        "densenet"
+        "efficientnet_v2_l",
     ]
 
     factory = ModelFactory(num_classes=len(class_names))
@@ -296,7 +299,7 @@ if __name__ == "__main__":
             class_names=class_names
         )
 
-        history = trainer.train(epochs=10)
+        history = trainer.train(epochs=50)
 
         summary_results.append([
             model_name,
@@ -308,3 +311,24 @@ if __name__ == "__main__":
     print("Model | F1 Macro | Val Loss")
     for row in summary_results:
         print(f"{row[0]:15s} | {row[1]:.4f} | {row[2]:.4f}")
+
+
+# 5 freeze, 5unfreeze
+# ===== FINAL SUMMARY TABLE =====
+# Model | F1 Macro | Val Loss
+# convnext        | 0.6871 | 0.1904
+# efficientnet_b3 | 0.6231 | 0.2525
+# efficientnet_b7 | 0.5817 | 0.2895
+# efficientnet_v2_s | 0.6294 | 0.2227
+# efficientnet_v2_m | 0.6515 | 0.1801
+# resnet50        | 0.6005 | 0.2783
+# densenet        | 0.6102 | 0.2094
+
+# 5 freeze, 15 epo unfreeze
+# convnext        | 0.7259 | 0.1991
+# efficientnet_b3 | 0.6271 | 0.3175
+# efficientnet_b7 | 0.6197 | 0.2697
+# efficientnet_v2_s | 0.6580 | 0.1878
+# efficientnet_v2_m | 0.6925 | 0.1734
+# resnet50        | 0.6656 | 0.2896
+# densenet        | 0.6412 | 0.1592
