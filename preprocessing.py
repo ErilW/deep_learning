@@ -1,11 +1,70 @@
 from tqdm import tqdm
-import os
 import pandas as pd
 import numpy as np
-from PIL import Image
 import gdown
 import matplotlib.pyplot as plt
 from utils import create_dataset_by_dx
+import os
+from PIL import Image
+import albumentations as A
+import cv2
+
+def augment_dataset(
+    input_root,
+    output_root,
+    classes_no_aug=["NV", "mel", "bkl", "bcc"],
+    augment_factor=5
+):
+
+    os.makedirs(output_root, exist_ok=True)
+
+    aug = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomBrightnessContrast(p=0.25),
+        A.GaussianBlur(p=0.1)
+    ])
+
+    # Loop setiap kelas
+    for cls in os.listdir(input_root):
+        cls_input = os.path.join(input_root, cls)
+        cls_output = os.path.join(output_root, cls)
+        os.makedirs(cls_output, exist_ok=True)
+
+        # kelas yang tidak diaugment
+        if cls in classes_no_aug:
+            print(f"❌ Skip augmentasi untuk kelas: {cls}")
+            # copy semua file apa adanya
+            for img_file in os.listdir(cls_input):
+                src = os.path.join(cls_input, img_file)
+                dst = os.path.join(cls_output, img_file)
+                os.system(f"cp '{src}' '{dst}'")
+            continue
+
+        print(f"🚀 Augmentasi kelas: {cls}")
+
+        for img_file in os.listdir(cls_input):
+            img_path = os.path.join(cls_input, img_file)
+
+            image = cv2.imread(img_path)
+            if image is None:
+                continue
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+            # Simpan original
+            cv2.imwrite(os.path.join(cls_output, img_file), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+
+            # Bikin 5 augmentasi
+            for i in range(augment_factor):
+                augmented = aug(image=image)["image"]
+                out_name = img_file.replace(".jpg", f"_aug{i}.jpg")
+                cv2.imwrite(
+                    os.path.join(cls_output, out_name),
+                    cv2.cvtColor(augmented, cv2.COLOR_RGB2BGR)
+                )
+
+    print("\n🎉 DONE! Dataset baru siap dipakai:")
+    print(output_root)
 
 class SkinDatasetPreprocessor:
     def __init__(self,  
@@ -167,3 +226,10 @@ class SkinDatasetPreprocessor:
 
         print("\n=== SEGMENTATION COMPLETE ===\n")
 
+if __name__ == "__main__":
+    augment_dataset(
+        input_root="./root/segmentation_masks/train",
+        output_root="./root/segmentation_masks2/train",
+        classes_no_aug=["NV", "mel", "bkl", "bcc"],
+        augment_factor=6
+    )
