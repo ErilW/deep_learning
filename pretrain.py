@@ -1,3 +1,4 @@
+import datetime
 import os
 import torch
 import torch.nn as nn
@@ -8,6 +9,8 @@ from sklearn.metrics import f1_score, confusion_matrix, classification_report, a
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+from sklearn.model_selection import KFold
+
 import numpy as np
 
 # ================================================================
@@ -252,6 +255,19 @@ def load_datasets(root):
     test  = datasets.ImageFolder(os.path.join(root, "test"), transform=transform)
     return train, val, test
 
+def make_kfold_loaders(dataset, k, batch_size=32):
+    indices = np.arange(len(dataset))
+    kf = KFold(n_splits=k, shuffle=True, random_state=42)
+
+    for fold, (train_idx, val_idx) in enumerate(kf.split(indices)):
+        train_subset = torch.utils.data.Subset(dataset, train_idx)
+        val_subset   = torch.utils.data.Subset(dataset, val_idx)
+
+        train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=8)
+        val_loader   = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=8)
+
+        yield fold + 1, train_loader, val_loader
+
 
 def compute_class_weights(dataset):
     labels = [y for _, y in dataset]
@@ -264,53 +280,61 @@ if __name__ == "__main__":
     root = "./root/segmentation_masks"
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    train_set, val_set, test_set = load_datasets(root)
+    # Load only train + test (val diganti K-fold)
+    train_set, _, test_set = load_datasets(root)
     class_names = train_set.classes
+    num_classes = len(class_names)
 
-    weights = compute_class_weights(train_set)
+    test_loader = DataLoader(test_set, batch_size=32, shuffle=False, num_workers=8)
 
-    train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=8)
-    val_loader   = DataLoader(val_set, batch_size=64, shuffle=False, num_workers=8)
-    test_loader  = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=8)
+    # entire train set for split
+    class_weights = compute_class_weights(train_set)
 
     model_names = [
         "convnext",
+        "efficientnet_v2_m",
+        "densenet"
         # "efficientnet_b3",
         # "efficientnet_v2_s",
-        # "efficientnet_v2_m",
-        "efficientnet_v2_l",
     ]
 
-    factory = ModelFactory(num_classes=len(class_names))
-    summary_results = []
+    K = 5
+    factory = ModelFactory(num_classes=num_classes)
+
+    summary = {}
 
     for model_name in model_names:
-        print(f"\n========== TRAINING {model_name.upper()} ==========")
+        print(f"\n==================== {model_name.upper()} — {K}-FOLD ====================\n")
 
-        model = factory.create(model_name)
-        trainer = Trainer(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            test_loader=test_loader,
-            device=device,
-            class_weights=weights,
-            save_dir=f"./results_{model_name}",
-            class_names=class_names
-        )
+        fold_scores = []
 
-        history = trainer.train(epochs=20)
+        for fold, train_loader, val_loader in make_kfold_loaders(train_set, K):
 
-        summary_results.append([
-            model_name,
-            history["f1_macro"][-1],
-            history["val_loss"][-1]
-        ])
+            print(f"\n📌 Fold {fold}/{K} for {model_name}\n")
 
-    print("\n===== FINAL SUMMARY TABLE =====")
-    print("Model | F1 Macro | Val Loss")
-    for row in summary_results:
-        print(f"{row[0]:15s} | {row[1]:.4f} | {row[2]:.4f}")
+            model = factory.create(model_name)
+
+            save_dir = f"./results_{model_name}_fold{fold}"
+            trainer = Trainer(
+                model=model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=test_loader,
+                device=device,
+                class_weights=class_weights,
+                save_dir=save_dir,
+                class_names=class_names
+            )
+
+            history = trainer.train(epochs=20)
+            fold_scores.append(history["f1_macro"][-1])
+
+        summary[model_name] = fold_scores
+
+    print("\n==================== FINAL K-FOLD SUMMARY ====================\n")
+    for m, scores in summary.items():
+        print(f"{m}: mean F1 = {np.mean(scores):.4f}, folds = {scores}")
+
 
 
 # 5 freeze, 5unfreeze

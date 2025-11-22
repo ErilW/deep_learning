@@ -111,9 +111,9 @@ if "__main__" == __name__:
     model_names = [
         "convnext",
         # "efficientnet_b3",
-        # "efficientnet_v2_s",
+        "efficientnet_v2_s",
         # "efficientnet_v2_m",
-        "efficientnet_v2_l",
+        # "efficientnet_v2_l",
     ]
 
     factory = ModelFactory(num_classes=len(class_names))
