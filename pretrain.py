@@ -278,7 +278,7 @@ if __name__ == "__main__":
         "convnext",
         # "efficientnet_b3",
         # "efficientnet_v2_s",
-        "efficientnet_v2_m",
+        # "efficientnet_v2_m",
         # "efficientnet_v2_l",
     ]
 
