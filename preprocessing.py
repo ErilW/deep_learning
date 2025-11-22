@@ -230,6 +230,6 @@ if __name__ == "__main__":
     augment_dataset(
         input_root="./root/segmentation_masks/train",
         output_root="./root/segmentation_masks2/train",
-        classes_no_aug=["NV", "mel", "bkl", "bcc"],
+        classes_no_aug=["nv", "mel", "bkl", "bcc"],
         augment_factor=6
     )
