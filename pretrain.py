@@ -220,7 +220,7 @@ class Trainer:
         trainable = filter(lambda p: p.requires_grad, self.model.parameters())
         self.optimizer = optim.Adam(trainable, lr=1e-4, weight_decay=1e-5)
         # scheduler that reduces LR on plateau (will be re-created when optimizer changes)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3)
 
     # -----------------------------------------------
     def freeze_backbone(self):
@@ -300,7 +300,7 @@ class Trainer:
     def _recreate_optimizer_and_scheduler(self, lr=1e-5):
         # recreate optimizer with all trainable params (call after unfreeze)
         self.optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=lr, weight_decay=1e-5)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3)
 
     def train(self, epochs=3):
         print(f"\n🚀 Device digunakan: {self.device.upper()}")
