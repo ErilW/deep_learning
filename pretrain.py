@@ -604,7 +604,7 @@ if __name__ == "__main__":
             test_loader=test_loader,
             device=device,
             class_weights=weights,
-            save_dir=f"./results__{model_name}",
+            save_dir=f"./results_{timer}_{model_name}",
             class_names=class_names,
             multimodal=multimodal_flag
         )
