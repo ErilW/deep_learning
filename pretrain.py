@@ -517,10 +517,10 @@ def make_image_only_datasets(root, transform):
 
 if __name__ == "__main__":
     # Paths (gunakan path yang kamu berikan)
-    train_csv = r"C:\Users\User\Documents\deep_learning\Dataset HAM1000\train.csv"
-    val_csv   = r"C:\Users\User\Documents\deep_learning\Dataset HAM1000\val_public.csv"
-    test_csv  = r"C:\Users\User\Documents\deep_learning\Dataset HAM1000\test_hidden.csv"
-    img_root  = r"C:\Users\User\Documents\deep_learning\Dataset HAM1000"  # akan dicari recursive di dalam folder ini
+    train_csv = r"./Dataset HAM1000/train.csv"
+    val_csv   = r"./Dataset HAM1000/val_public.csv"
+    test_csv  = r"./Dataset HAM1000/test_hidden.csv"
+    img_root  = r"./Dataset HAM1000/"  # akan dicari recursive di dalam folder ini
 
     # Note: kalau struktur gambar kamu berada di ./segmentation_masks/... ubah img_root ke folder itu.
     # root untuk image-only ImageFolder (original script) - penyesuaian
