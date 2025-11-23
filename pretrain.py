@@ -114,7 +114,7 @@ class ModelFactory:
         name = name.lower()
 
         if name == "convnext":
-            model = models.convnext_small(weights="IMAGENET1K_V1")
+            model = models.convnext_tiny(weights="IMAGENET1K_V1")
             in_feat = model.classifier[2].in_features
 
             model.classifier = nn.Sequential(
@@ -691,9 +691,9 @@ if __name__ == "__main__":
             # compute class weights from imagefolder labels
             labels = torch.tensor([y for _, y in train_img])
             weights = compute_class_weights_from_labels(labels)
-            train_loader = DataLoader(train_img, batch_size=32, shuffle=True, num_workers=4)
-            val_loader   = DataLoader(val_img, batch_size=32, shuffle=False, num_workers=4)
-            test_loader  = DataLoader(test_img, batch_size=32, shuffle=False, num_workers=4)
+            train_loader = DataLoader(train_img, batch_size=256, shuffle=True, num_workers=16)
+            val_loader   = DataLoader(val_img, batch_size=256, shuffle=False, num_workers=16)
+            test_loader  = DataLoader(test_img, batch_size=256, shuffle=False, num_workers=16)
 
             model = factory.create(model_name)
             multimodal_flag = False
