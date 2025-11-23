@@ -43,9 +43,16 @@ class ModelFactory:
         name = name.lower()
 
         if name == "convnext":
-            model = models.convnext_large(weights="IMAGENET1K_V1")
+            model = models.convnext_small(weights="IMAGENET1K_V1")
             in_feat = model.classifier[2].in_features
-            model.classifier[2] = nn.Linear(in_feat, self.num_classes)
+
+            model.classifier = nn.Sequential(
+                model.classifier[0],  # LayerNorm2d
+                nn.Flatten(),
+                nn.Dropout(0.3),
+                nn.Linear(in_feat, self.num_classes)
+            )
+
 
         elif name == "efficientnet_b3":
             model = models.efficientnet_b3(weights="IMAGENET1K_V1")
@@ -218,8 +225,10 @@ class TabularEncoder(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(hidden_dim, out_dim),
-            nn.ReLU()
+            nn.ReLU(),
+            nn.Dropout(0.2)
         )
 
     def forward(self, x):
@@ -289,7 +298,10 @@ class MultiModalFusion(nn.Module):
             nn.Linear(feat_dim + tabular_emb_dim, 256),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.25),
+            nn.Linear(128, num_classes)
         )
 
         # Prior
@@ -349,9 +361,27 @@ class Trainer:
             else:
                 param.requires_grad = False
 
+    def _freeze_batchnorm(self):
+        for module in self.model.modules():
+            if isinstance(module, nn.BatchNorm2d):
+                module.eval()
+                for param in module.parameters():
+                    param.requires_grad = False
+
     def unfreeze_backbone(self):
+        # freeze semua dulu
         for param in self.model.parameters():
-            param.requires_grad = True
+            param.requires_grad = False
+
+        # buka 2 block terakhir: Stage 4
+        for name, param in self.model.named_parameters():
+            if name.startswith("features.3") or name.startswith("features.4"):
+                param.requires_grad = True
+
+        # classifier biarkan tetap terbuka
+        for name, param in self.model.named_parameters():
+            if "classifier" in name.lower():
+                param.requires_grad = True
 
     def train(self, epochs=3):
         print(f"\n🚀 Device digunakan: {self.device.upper()}")
@@ -362,6 +392,7 @@ class Trainer:
             if epoch == 5:
                 print("🔓 Unfreezing backbone & lowering LR...")
                 self.unfreeze_backbone()
+                self._freeze_batchnorm()
                 # reset optimizer to include all parameters with a smaller LR
                 self.optimizer = optim.Adam(self.model.parameters(), lr=1e-5, weight_decay=1e-5)
 
