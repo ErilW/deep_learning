@@ -43,7 +43,7 @@ class ModelFactory:
         name = name.lower()
 
         if name == "convnext":
-            model = models.convnext_tiny(weights="IMAGENET1K_V1")
+            model = models.convnext_large(weights="IMAGENET1K_V1")
             in_feat = model.classifier[2].in_features
             model.classifier[2] = nn.Linear(in_feat, self.num_classes)
 
@@ -575,9 +575,9 @@ if __name__ == "__main__":
             labels = torch.tensor([label for _, _, label in train_set])
             weights = compute_class_weights_from_labels(labels)
             # DataLoaders
-            train_loader = DataLoader(train_set, batch_size=128, shuffle=True, num_workers=8)
-            val_loader   = DataLoader(val_set, batch_size=128, shuffle=False, num_workers=8)
-            test_loader  = DataLoader(test_set, batch_size=128, shuffle=False, num_workers=8)
+            train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=8)
+            val_loader   = DataLoader(val_set, batch_size=64, shuffle=False, num_workers=8)
+            test_loader  = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=8)
 
             # build model
             cnn = factory.create(model_name)
