@@ -31,77 +31,6 @@ class FocalLoss(nn.Module):
         loss = -((1 - pt) ** self.gamma) * logpt
         return loss.mean()
 
-from collections import Counter
-from torchvision.transforms import functional as TF
-import random
-
-def augment_image(img):
-    # augment sederhana yang aman untuk skin
-    if random.random() < 0.5:
-        img = TF.hflip(img)
-    if random.random() < 0.5:
-        img = TF.vflip(img)
-    if random.random() < 0.5:
-        img = TF.rotate(img, random.choice([90, 180, 270]))
-    return img
-
-def oversample_with_augmentation(dataset, dominant_classes, target_multiplier=3):
-    """
-    dataset: ImageFolder dataset TRAIN
-    dominant_classes: list of class_idx yg jangan di-augment
-    target_multiplier: 2–4X sesuai yg kamu mau
-    """
-    class_indices = {cls: [] for cls in range(len(dataset.classes))}
-    for idx, (_, label) in enumerate(dataset.samples):
-        class_indices[label].append(idx)
-
-    # hitung jumlah terbesar dari kelas non-dominant
-    non_dom_counts = [len(v) for c, v in class_indices.items() if c not in dominant_classes]
-    max_target = max(non_dom_counts) * target_multiplier
-
-    print("\n[ Oversample Debug ]")
-    print("Target per minor class:", max_target)
-
-    new_samples = []
-
-    for cls, idxs in class_indices.items():
-        imgs = idxs.copy()
-        # kelas dominan → tetap
-        if cls in dominant_classes:
-            new_samples.extend([(dataset.samples[i][0], cls) for i in imgs])
-            continue
-
-        # oversample kelas minor
-        cur = len(imgs)
-        need = max_target - cur
-
-        new_samples.extend([(dataset.samples[i][0], cls) for i in imgs])
-
-        for _ in range(need):
-            src_idx = random.choice(imgs)
-            img_path, lbl = dataset.samples[src_idx]
-            img = Image.open(img_path).convert("RGB")
-            img = augment_image(img)
-            new_samples.append((img.copy(), lbl))  # store PIL, bukan path
-
-        print(f"Class {cls}: {cur} → {cur+need}")
-
-    # custom dataset return
-    class AugDataset(torch.utils.data.Dataset):
-        def __init__(self, items, transform):
-            self.items = items
-            self.transform = transform
-        def __len__(self):
-            return len(self.items)
-        def __getitem__(self, idx):
-            img, lbl = self.items[idx]
-            if isinstance(img, str):
-                img = Image.open(img).convert("RGB")
-            if self.transform:
-                img = self.transform(img)
-            return img, lbl
-
-    return AugDataset(new_samples, dataset.transform)
 
 # ================================================================
 #  Model Factory
@@ -668,17 +597,18 @@ if __name__ == "__main__":
         # === prepare datasets/loaders ===
         if model_name.lower() == "convnext":
             # multimodal + prior enabled
-            print("📌 Building train dataset...")
-            train, val, test = make_image_only_datasets(imagefolder_root, transform)
+            print("=> Using multimodal pipeline (image + tabular) with prior correction for ConvNeXt")
+            train_set = HAM10000MultimodalDataset(train_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
+            val_set   = HAM10000MultimodalDataset(val_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
+            test_set  = HAM10000MultimodalDataset(test_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
 
-            # kelas dominan (misal nv & mel, cek CSV lo benerin kalau beda)
-            dominant = [0, 1]  # contoh, adjust sesuai label_idx lo sendiri
-
-            train = oversample_with_augmentation(train, dominant_classes=dominant, target_multiplier=3)
-
-            train_loader = DataLoader(train, batch_size=32, shuffle=True)
-            val_loader = DataLoader(val, batch_size=32, shuffle=False)
-            test_loader = DataLoader(test, batch_size=32, shuffle=False)
+            # compute class weights from labels in train_set
+            labels = torch.tensor([label for _, _, label in train_set])
+            weights = compute_class_weights_from_labels(labels)
+            # DataLoaders
+            train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=8)
+            val_loader   = DataLoader(val_set, batch_size=64, shuffle=False, num_workers=8)
+            test_loader  = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=8)
 
             # build model
             cnn = factory.create(model_name)
@@ -691,9 +621,9 @@ if __name__ == "__main__":
             # compute class weights from imagefolder labels
             labels = torch.tensor([y for _, y in train_img])
             weights = compute_class_weights_from_labels(labels)
-            train_loader = DataLoader(train_img, batch_size=256, shuffle=True, num_workers=16)
-            val_loader   = DataLoader(val_img, batch_size=256, shuffle=False, num_workers=16)
-            test_loader  = DataLoader(test_img, batch_size=256, shuffle=False, num_workers=16)
+            train_loader = DataLoader(train_img, batch_size=32, shuffle=True, num_workers=4)
+            val_loader   = DataLoader(val_img, batch_size=32, shuffle=False, num_workers=4)
+            test_loader  = DataLoader(test_img, batch_size=32, shuffle=False, num_workers=4)
 
             model = factory.create(model_name)
             multimodal_flag = False
