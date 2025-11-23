@@ -45,14 +45,7 @@ class ModelFactory:
         if name == "convnext":
             model = models.convnext_tiny(weights="IMAGENET1K_V1")
             in_feat = model.classifier[2].in_features
-
-            model.classifier = nn.Sequential(
-                model.classifier[0],  # LayerNorm2d
-                nn.Flatten(),
-                nn.Dropout(0.3),
-                nn.Linear(in_feat, self.num_classes)
-            )
-
+            model.classifier[2] = nn.Linear(in_feat, self.num_classes)
 
         elif name == "efficientnet_b3":
             model = models.efficientnet_b3(weights="IMAGENET1K_V1")
@@ -225,10 +218,8 @@ class TabularEncoder(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(0.3),
             nn.Linear(hidden_dim, out_dim),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.ReLU()
         )
 
     def forward(self, x):
@@ -298,10 +289,7 @@ class MultiModalFusion(nn.Module):
             nn.Linear(feat_dim + tabular_emb_dim, 256),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.25),
-            nn.Linear(128, num_classes)
+            nn.Linear(256, num_classes)
         )
 
         # Prior
@@ -361,27 +349,9 @@ class Trainer:
             else:
                 param.requires_grad = False
 
-    def _freeze_batchnorm(self):
-        for module in self.model.modules():
-            if isinstance(module, nn.BatchNorm2d):
-                module.eval()
-                for param in module.parameters():
-                    param.requires_grad = False
-
     def unfreeze_backbone(self):
-        # freeze semua dulu
         for param in self.model.parameters():
-            param.requires_grad = False
-
-        # buka 2 block terakhir: Stage 4
-        for name, param in self.model.named_parameters():
-            if name.startswith("features.3") or name.startswith("features.4"):
-                param.requires_grad = True
-
-        # classifier biarkan tetap terbuka
-        for name, param in self.model.named_parameters():
-            if "classifier" in name.lower():
-                param.requires_grad = True
+            param.requires_grad = True
 
     def train(self, epochs=3):
         print(f"\n🚀 Device digunakan: {self.device.upper()}")
@@ -392,7 +362,6 @@ class Trainer:
             if epoch == 5:
                 print("🔓 Unfreezing backbone & lowering LR...")
                 self.unfreeze_backbone()
-                self._freeze_batchnorm()
                 # reset optimizer to include all parameters with a smaller LR
                 self.optimizer = optim.Adam(self.model.parameters(), lr=1e-5, weight_decay=1e-5)
 
@@ -576,8 +545,9 @@ if __name__ == "__main__":
         "convnext",
         # "efficientnet_b3",
         # "efficientnet_v2_s",
-        # "efficientnet_v2_m",
+        "efficientnet_v2_m",
         # "efficientnet_v2_l",
+        "densenet"
     ]
 
     factory = ModelFactory(num_classes=7)  # ham10000 typically 7 classes; but we'll read class names from CSV instead
@@ -595,38 +565,25 @@ if __name__ == "__main__":
         print(f"\n========== TRAINING {model_name.upper()} ==========")
         timer = datetime.datetime.now()
         # === prepare datasets/loaders ===
-        if model_name.lower() == "convnext":
+        # if model_name.lower() == "convnext":
             # multimodal + prior enabled
-            print("=> Using multimodal pipeline (image + tabular) with prior correction for ConvNeXt")
-            train_set = HAM10000MultimodalDataset(train_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
-            val_set   = HAM10000MultimodalDataset(val_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
-            test_set  = HAM10000MultimodalDataset(test_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
+        print("=> Using multimodal pipeline (image + tabular) with prior correction for ConvNeXt")
+        train_set = HAM10000MultimodalDataset(train_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
+        val_set   = HAM10000MultimodalDataset(val_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
+        test_set  = HAM10000MultimodalDataset(test_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform)
 
-            # compute class weights from labels in train_set
-            labels = torch.tensor([label for _, _, label in train_set])
-            weights = compute_class_weights_from_labels(labels)
-            # DataLoaders
-            train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=8)
-            val_loader   = DataLoader(val_set, batch_size=64, shuffle=False, num_workers=8)
-            test_loader  = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=8)
+        # compute class weights from labels in train_set
+        labels = torch.tensor([label for _, _, label in train_set])
+        weights = compute_class_weights_from_labels(labels)
+        # DataLoaders
+        train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=8)
+        val_loader   = DataLoader(val_set, batch_size=64, shuffle=False, num_workers=8)
+        test_loader  = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=8)
 
-            # build model
-            cnn = factory.create(model_name)
-            model = MultiModalFusion(cnn_model=cnn, num_classes=len(unique_labels), tabular_dim=tab_dim, tabular_emb_dim=32, use_prior=True)
-            multimodal_flag = True
-
-        else:
-            # original image-only pipeline
-            train_img, val_img, test_img = make_image_only_datasets(imagefolder_root, transform)
-            # compute class weights from imagefolde r labels
-            labels = torch.tensor([y for _, y in train_img])
-            weights = compute_class_weights_from_labels(labels)
-            train_loader = DataLoader(train_img, batch_size=256, shuffle=True, num_workers=16)
-            val_loader   = DataLoader(val_img, batch_size=256, shuffle=False, num_workers=16)
-            test_loader  = DataLoader(test_img, batch_size=256, shuffle=False, num_workers=16)
-
-            model = factory.create(model_name)
-            multimodal_flag = False
+        # build model
+        cnn = factory.create(model_name)
+        model = MultiModalFusion(cnn_model=cnn, num_classes=len(unique_labels), tabular_dim=tab_dim, tabular_emb_dim=32, use_prior=True)
+        multimodal_flag = True
 
         trainer = Trainer(
             model=model,
@@ -640,7 +597,7 @@ if __name__ == "__main__":
             multimodal=multimodal_flag
         )
 
-        history = trainer.train(epochs=30)
+        history = trainer.train(epochs=20)
 
         summary_results.append([
             model_name,
