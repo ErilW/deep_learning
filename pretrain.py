@@ -507,7 +507,7 @@ def compute_class_weights_from_labels(labels_tensor):
 
 def make_image_only_datasets(root, transform):
     """
-    Keep original ImageFolder-based datasets for models other than convnext.
+    Keep origin al ImageFolder-based datasets for models other than convnext.
     """
     train = datasets.ImageFolder(os.path.join(root, "train"), transform=transform)
     val   = datasets.ImageFolder(os.path.join(root, "val"), transform=transform)
