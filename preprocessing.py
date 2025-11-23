@@ -149,14 +149,17 @@ class SkinDatasetPreprocessor:
     #       SAFE & TQDM — APPLY SEGMENTATION MASKS
     # ============================================================
     def apply_segmentation_masks(self, do_crop=True, size=(224, 224)):
+        import cv2
+        import numpy as np
+        from PIL import Image
 
         if self.segmentations_dir is None:
             raise ValueError("ERROR: segmentations_dir belum diisi!")
 
-        print("\n=== APPLY SEGMENTATION MASKS ===")
+        print("\n=== APPLY SEGMENTATION MASKS (FIXED VERSION) ===")
         print(f"Segmentation folder: {self.segmentations_dir}\n")
 
-        # Skip entire process if already created
+        # Skip if already exists and not empty
         if os.path.exists(self.output_root_segment):
             if any(os.scandir(self.output_root_segment)):
                 print("[SKIP] Folder segmentasi sudah ada dan berisi file.")
@@ -181,11 +184,12 @@ class SkinDatasetPreprocessor:
                 cls_dst = os.path.join(dst_split_path, cls)
                 os.makedirs(cls_dst, exist_ok=True)
 
-                images = [f for f in os.listdir(cls_src)
-                          if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                images = [
+                    f for f in os.listdir(cls_src)
+                    if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+                ]
 
                 for fname in tqdm(images, desc=f"{split}/{cls}", ncols=80):
-
                     img_path = os.path.join(cls_src, fname)
                     img = Image.open(img_path).convert("RGB")
                     img_np = np.array(img)
@@ -201,21 +205,34 @@ class SkinDatasetPreprocessor:
                     # load mask
                     mask = Image.open(mask_path).convert("L")
                     mask_np = np.array(mask)
-                    mask_bool = mask_np > 0
 
+                    # ==== FIX 1: Hard binary mask (hilangkan halo) ====
+                    _, mask_bin = cv2.threshold(mask_np, 127, 255, cv2.THRESH_BINARY)
+
+                    # ==== FIX 2: Morphological clean-up ====
+                    kernel = np.ones((7, 7), np.uint8)
+                    mask_bin = cv2.morphologyEx(mask_bin, cv2.MORPH_CLOSE, kernel)
+                    mask_bin = cv2.morphologyEx(mask_bin, cv2.MORPH_OPEN, kernel)
+
+                    # pastikan tetap 0/1
+                    mask_bool = (mask_bin > 0).astype(np.uint8)
+
+                    # 3-channel mask
                     mask3 = np.repeat(mask_bool[:, :, None], 3, axis=2)
+
+                    # ==== FIX 3: apply mask sesungguhnya ====
                     result = img_np * mask3
                     segmented = Image.fromarray(result)
 
-                    # crop bounding box
+                    # ==== FIX 4: tight crop area lesion ====
                     if do_crop:
-                        ys, xs = np.where(mask_bool)
+                        ys, xs = np.where(mask_bool == 1)
                         if len(xs) > 0:
                             x1, x2 = xs.min(), xs.max()
                             y1, y2 = ys.min(), ys.max()
                             segmented = segmented.crop((x1, y1, x2, y2))
 
-                    # 🔥 **RESIZE DI SINI**
+                    # resize setelah crop
                     if size is not None:
                         segmented = segmented.resize(size, Image.Resampling.LANCZOS)
 
@@ -225,6 +242,7 @@ class SkinDatasetPreprocessor:
             print(f"[DONE] {split}")
 
         print("\n=== SEGMENTATION COMPLETE ===\n")
+
 
 if __name__ == "__main__":
     augment_dataset(
