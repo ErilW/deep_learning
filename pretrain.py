@@ -618,7 +618,7 @@ if __name__ == "__main__":
         else:
             # original image-only pipeline
             train_img, val_img, test_img = make_image_only_datasets(imagefolder_root, transform)
-            # compute class weights from imagefolder labels
+            # compute class weights from imagefolde r labels
             labels = torch.tensor([y for _, y in train_img])
             weights = compute_class_weights_from_labels(labels)
             train_loader = DataLoader(train_img, batch_size=256, shuffle=True, num_workers=16)
