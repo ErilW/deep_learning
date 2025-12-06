@@ -546,7 +546,7 @@ if __name__ == "__main__":
     train_csv = r"./Dataset HAM1000/train.csv"
     val_csv   = r"./Dataset HAM1000/val_public.csv"
     test_csv  = r"./Dataset HAM1000/test_hidden.csv"
-    img_root  = r"./Dataset HAM1000/"
+    img_root  = r"./root/preprocessed_datasets"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
