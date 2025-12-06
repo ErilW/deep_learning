@@ -1,175 +1,200 @@
 import os
+import pandas as pd
+import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
-from PIL import Image
+from torchvision import transforms, models
+from sklearn.metrics import classification_report, confusion_matrix
 from tqdm import tqdm
-import timm
+
 
 # ==========================================================
-# DATASET (identik dengan notebook)
+#  PATHS (sesuai permintaan)
 # ==========================================================
-class ImageFolderDataset(Dataset):
-    def __init__(self, root, transform=None):
-        self.root = root
-        self.files = []
-        self.targets = []
+TRAIN_CSV = r"./Dataset HAM1000/train.csv"
+VAL_CSV   = r"./Dataset HAM1000/val_public.csv"
+TEST_CSV  = r"./Dataset HAM1000/test_hidden.csv"
+IMG_ROOT  = r"./root/preprocessed_datasets"
+
+
+# ==========================================================
+#  DATASET CLASS
+# ==========================================================
+class SkinDataset(Dataset):
+    def __init__(self, csv_file, img_root, transform=None):
+        self.df = pd.read_csv(csv_file)
+        self.img_root = img_root
         self.transform = transform
 
-        classes = sorted(os.listdir(root))
-        self.class_to_idx = {c: i for i, c in enumerate(classes)}
+        # wajib ada kolom 'image' dan 'label'
+        assert "image" in self.df.columns
+        assert "label" in self.df.columns
 
-        for c in classes:
-            class_dir = os.path.join(root, c)
-            for f in os.listdir(class_dir):
-                if f.lower().endswith((".jpg", ".png", ".jpeg")):
-                    self.files.append(os.path.join(class_dir, f))
-                    self.targets.append(self.class_to_idx[c])
+        # mapping label → index
+        self.label_to_idx = {label: i for i, label in enumerate(sorted(self.df["label"].unique()))}
+        self.idx_to_label = {v: k for k, v in self.label_to_idx.items()}
 
     def __len__(self):
-        return len(self.files)
+        return len(self.df)
 
     def __getitem__(self, idx):
-        img = Image.open(self.files[idx]).convert("RGB")
-        target = self.targets[idx]
+        row = self.df.iloc[idx]
+        img_path = os.path.join(self.img_root, row["label"], row["image"])
+
+        img = cv2.imread(img_path)
+        if img is None:
+            raise ValueError(f"Image not found: {img_path}")
+
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         if self.transform:
             img = self.transform(img)
 
-        return img, target
+        label = self.label_to_idx[row["label"]]
+        return img, label
 
 
 # ==========================================================
-# TRANSFORM (100% sama dengan notebook)
+#  TRANSFORMS (ImageNet + 224)
 # ==========================================================
 train_tf = transforms.Compose([
+    transforms.ToPILImage(),
     transforms.Resize((224, 224)),
-    transforms.ToTensor(),  # ALWAYS float32 (0–1)
-    transforms.Normalize([0.485, 0.456, 0.406],
-                         [0.229, 0.224, 0.225]),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
 ])
 
-test_tf = transforms.Compose([
+val_tf = transforms.Compose([
+    transforms.ToPILImage(),
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406],
-                         [0.229, 0.224, 0.225]),
+    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
 ])
 
 
 # ==========================================================
-# TRAINER (identik dengan notebook)
+#  DATALOADERS
+# ==========================================================
+train_ds = SkinDataset(TRAIN_CSV, IMG_ROOT, train_tf)
+val_ds   = SkinDataset(VAL_CSV, IMG_ROOT, val_tf)
+test_ds  = SkinDataset(TEST_CSV, IMG_ROOT, val_tf)
+
+train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=2)
+val_loader   = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=2)
+test_loader  = DataLoader(test_ds, batch_size=16, shuffle=False, num_workers=2)
+
+num_classes = len(train_ds.label_to_idx)
+print("Classes:", train_ds.label_to_idx)
+
+
+# ==========================================================
+#  MODEL LOADER — dari kecil → besar
+# ==========================================================
+def load_model(name):
+    if name == "resnet18":
+        model = models.resnet18(weights="IMAGENET1K_V1")
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+        return model
+
+    if name == "mobilenet_v3_small":
+        model = models.mobilenet_v3_small(weights="IMAGENET1K_V1")
+        model.classifier[3] = nn.Linear(model.classifier[3].in_features, num_classes)
+        return model
+
+    if name == "efficientnet_b0":
+        model = models.efficientnet_b0(weights="IMAGENET1K_V1")
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+        return model
+
+    raise ValueError("Unknown model name")
+
+
+# ==========================================================
+#  TRAINER CLASS
 # ==========================================================
 class Trainer:
-    def __init__(self, model, trainloader, testloader, device):
-        self.model = model.to(device)
-        self.trainloader = trainloader
-        self.testloader = testloader
-        self.device = device
+    def __init__(self, model):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = model.to(self.device)
 
-        self.crit = nn.CrossEntropyLoss()
-        self.opt = optim.Adam(self.model.parameters(), lr=1e-4)
+        self.loss_fn = nn.CrossEntropyLoss()
+        self.opt = optim.Adam(model.parameters(), lr=1e-4)
 
-    def train(self, epochs):
+    def train_epoch(self, loader):
         self.model.train()
-        for e in range(epochs):
-            loop = tqdm(self.trainloader, total=len(self.trainloader),
-                        desc=f"Epoch {e+1}/{epochs}")
+        total_loss = 0
 
-            for img, label in loop:
+        for imgs, labels in tqdm(loader, desc="Train"):
+            imgs, labels = imgs.to(self.device), labels.to(self.device)
 
-                # =============================
-                # SAFETY PATCH (fix uint8 bug)
-                # =============================
-                img = img.to(self.device)
-                label = label.to(self.device)
+            self.opt.zero_grad()
+            preds = self.model(imgs)
+            loss = self.loss_fn(preds, labels)
+            loss.backward()
+            self.opt.step()
 
-                if img.dtype != torch.float32:
-                    img = img.float() / 255.0
+            total_loss += loss.item()
+        return total_loss / len(loader)
 
-                self.opt.zero_grad()
-                out = self.model(img)
-                loss = self.crit(out, label)
-                loss.backward()
-                self.opt.step()
-
-                loop.set_postfix(loss=loss.item())
-
-    def evaluate(self):
+    def eval_epoch(self, loader):
         self.model.eval()
+        total_loss = 0
         correct = 0
         total = 0
 
         with torch.no_grad():
-            for img, label in self.testloader:
+            for imgs, labels in tqdm(loader, desc="Val"):
+                imgs, labels = imgs.to(self.device), labels.to(self.device)
 
-                img = img.to(self.device)
-                label = label.to(self.device)
+                preds = self.model(imgs)
+                loss = self.loss_fn(preds, labels)
 
-                if img.dtype != torch.float32:
-                    img = img.float() / 255.0
+                total_loss += loss.item()
+                correct += (preds.argmax(1) == labels).sum().item()
+                total += labels.size(0)
 
-                out = self.model(img)
-                pred = out.argmax(dim=1)
-                correct += (pred == label).sum().item()
-                total += label.size(0)
+        return total_loss / len(loader), correct / total
 
-        acc = correct / total
-        return acc
+    def evaluate_test(self, loader, idx_to_label):
+        self.model.eval()
+        all_preds = []
+        all_labels = []
+
+        with torch.no_grad():
+            for imgs, labels in tqdm(loader, desc="Test"):
+                imgs = imgs.to(self.device)
+                preds = self.model(imgs).argmax(1).cpu()
+
+                all_preds.extend(preds.numpy())
+                all_labels.extend(labels.numpy())
+
+        print("\n=== CLASSIFICATION REPORT ===")
+        print(classification_report(all_labels, all_preds, target_names=list(idx_to_label.values())))
+
+        print("\n=== CONFUSION MATRIX ===")
+        print(confusion_matrix(all_labels, all_preds))
 
 
 # ==========================================================
-# MODEL BUILDER (Swin 224 semua)
+#  MAIN TRAINING
 # ==========================================================
-def build_swin(model_name, num_classes):
-    return timm.create_model(
-        model_name,
-        pretrained=True,
-        img_size=224,     # Force 224 even for models that default 384
-        num_classes=num_classes
-    )
-
-
-# ==========================================================
-# MAIN PIPELINE
-# ==========================================================
-def main():
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # SESUAIKAN PATH
-    train_dir = "/workspace/dataset/train"
-    test_dir  = "/workspace/dataset/test"
-
-    trainset = ImageFolderDataset(train_dir, train_tf)
-    testset  = ImageFolderDataset(test_dir,  test_tf)
-
-    trainloader = DataLoader(trainset, batch_size=32, shuffle=True, num_workers=4)
-    testloader  = DataLoader(testset,  batch_size=32, shuffle=False, num_workers=4)
-
-    # LIST MODEL YANG MAU DITEST (dari kecil → besar)
-    swin_models = [
-        "swin_tiny_patch4_window7_224",
-        "swin_small_patch4_window7_224",
-        "swin_base_patch4_window7_224",
-        # tambah kalau mau
-    ]
-
-    print("\n=== Evaluating Swin Family ===")
-
-    for name in swin_models:
-        print(f"\n🔥 Model: {name}")
-
-        model = build_swin(name, num_classes=len(trainset.class_to_idx))
-
-        trainer = Trainer(model, trainloader, testloader, device)
-        trainer.train(epochs=3)
-
-        acc = trainer.evaluate()
-        print(f"➡️ FINAL ACC: {acc:.4f}")
-
-
 if __name__ == "__main__":
-    main()
+    model_name = "resnet18"   # ganti: "mobilenet_v3_small", "efficientnet_b0"
+    model = load_model(model_name)
+
+    t = Trainer(model)
+
+    for epoch in range(3):
+        print(f"\n================== Epoch {epoch+1} ==================")
+        loss = t.train_epoch(train_loader)
+        val_loss, val_acc = t.eval_epoch(val_loader)
+
+        print(f"Train Loss: {loss:.4f}")
+        print(f"Val Loss:   {val_loss:.4f}")
+        print(f"Val Acc:    {val_acc:.4f}")
+
+    print("\n================== TEST ==================")
+    t.evaluate_test(test_loader, test_ds.idx_to_label)
