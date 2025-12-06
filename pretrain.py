@@ -1,4 +1,10 @@
-# edited_pipeline_full_safe.py
+# edited_pipeline_swin_only.py
+"""
+Pipeline training (dipermudah) — fokus hanya pada SWIN transformer (timm).
+Menggunakan base code original: dataset albumentations, Label Smoothing,
+class-weighted CrossEntropy, Trainer dengan AMP, evaluator, dan penyimpanan best model.
+"""
+
 import datetime
 import os
 import random
@@ -7,7 +13,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms, models
+from torchvision import transforms
 from sklearn.metrics import f1_score, confusion_matrix, classification_report, accuracy_score, precision_recall_fscore_support
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -17,6 +23,7 @@ import pandas as pd
 from PIL import Image
 import warnings
 
+# external util (sama seperti di code kamu)
 from utils import notif
 
 warnings.filterwarnings("ignore")
@@ -24,6 +31,9 @@ warnings.filterwarnings("ignore")
 # albumentations
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+
+# timm untuk Swin
+import timm
 
 # reproducibility
 seed = 42
@@ -34,51 +44,35 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed)
 
 # ================================================================
-# Loss: Class-weighted CrossEntropy with Label Smoothing
+# Loss: Class-weighted CrossEntropy with Label Smoothing (PyTorch >=1.10)
 # ================================================================
 LabelSmoothingLoss = lambda weight=None, smoothing=0.1: nn.CrossEntropyLoss(weight=weight, label_smoothing=smoothing)
 
 # ================================================================
-# Model Factory
+# Model Factory: hanya Swin (timm). Full-finetune (no freeze).
 # ================================================================
 class ModelFactory:
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, swin_variant="swin_base_patch4_window7_224"):
         self.num_classes = num_classes
+        self.swin_variant = swin_variant
 
-    def create(self, name):
-        name = name.lower()
-        if name == "convnext":
-            model = models.convnext_tiny(weights="IMAGENET1K_V1")
-            in_feat = model.classifier[2].in_features
-            model.classifier[2] = nn.Linear(in_feat, self.num_classes)
-        elif name == "efficientnet_v2_m":
-            model = models.efficientnet_v2_m(weights="IMAGENET1K_V1")
-            in_feat = model.classifier[1].in_features
-            model.classifier[1] = nn.Linear(in_feat, self.num_classes)
-        elif name == "densenet":
-            model = models.densenet121(weights="IMAGENET1K_V1")
-            in_feat = model.classifier.in_features
-            model.classifier = nn.Linear(in_feat, self.num_classes)
-        elif name == "resnet50":
-            model = models.resnet50(weights="IMAGENET1K_V2")
-            in_feat = model.fc.in_features
-            model.fc = nn.Linear(in_feat, self.num_classes)
-        else:
-            raise ValueError(f"Unknown model: {name}")
+    def create(self):
+        """
+        Membuat model Swin pretrained via timm dan mengganti head ke num_classes.
+        Default variant: 'swin_base_patch4_window7_224' (ukuran input 224).
+        Jika membutuhkan input size lain, sesuaikan IMG_SIZE dan variant.
+        """
+        model = timm.create_model(self.swin_variant, pretrained=True, num_classes=self.num_classes)
         return model
 
 # ================================================================
-# Dataset with safe augmentations & class-wise ABC rule
+# Dataset (sama behavior): mendukung albumentations atau torchvision
 # ================================================================
 class HAM10000Dataset(Dataset):
-    def __init__(self, csv_path, img_root, transform=None, max_aug_per_class=2500):
+    def __init__(self, csv_path, img_root, transform=None):
         self.df = pd.read_csv(csv_path)
         self.img_root = img_root
         self.transform = transform
-        self.max_aug_per_class = max_aug_per_class
-        # maintain augmentation counters
-        self.class_counts = self.df['label_idx'].value_counts().to_dict()
-        self.augmented_counts = {k: 0 for k in self.class_counts.keys()}
 
     def __len__(self):
         return len(self.df)
@@ -99,27 +93,28 @@ class HAM10000Dataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         image_id = str(row['image_id'])
-        label = int(row['label_idx'])
         img_path = self._find_image_path(image_id)
         image = Image.open(img_path).convert("RGB")
-        # Apply transform safely
-        img_tensor = transforms.ToTensor()(image) if self.transform is None else self._apply_transform(image, label)
+        if self.transform is None:
+            img_tensor = transforms.ToTensor()(image)
+        else:
+            # albumentations expects numpy array
+            try:
+                augmented = self.transform(image=np.array(image))
+                img = augmented['image']
+                # ToTensorV2 already returns torch.Tensor
+                if isinstance(img, np.ndarray):
+                    img_tensor = transforms.ToTensor()(Image.fromarray(img))
+                else:
+                    img_tensor = img
+            except Exception:
+                # fallback: torchvision style transform callable
+                img_tensor = self.transform(image)
+        label = int(row['label_idx'])
         return img_tensor, label
 
-    def _apply_transform(self, image, label):
-        img_arr = np.array(image)
-        if self.augmented_counts[label] < self.max_aug_per_class:
-            augmented = self.transform(image=img_arr)
-            img_out = augmented['image']
-            self.augmented_counts[label] += 1
-            if self.augmented_counts[label] % 100 == 0:
-                print(f"Class {label} augmentation count: {self.augmented_counts[label]}")
-        else:
-            img_out = img_arr  # no more augmentation
-        return transforms.ToTensor()(Image.fromarray(img_out)) if isinstance(img_out, np.ndarray) else img_out
-
 # ================================================================
-# Trainer (unchanged logic, minor improvements)
+# Trainer: minimal changes from original (AMP, scheduler, save best by F1 macro)
 # ================================================================
 class Trainer:
     def __init__(self, model, train_loader, val_loader, test_loader, device, class_weights, save_dir, class_names, optimizer_cfg=None, scheduler_cfg=None, use_amp=True):
@@ -134,32 +129,41 @@ class Trainer:
         self.best_f1 = -1
         os.makedirs(save_dir, exist_ok=True)
 
-        # optimizer
         params = [p for p in self.model.parameters() if p.requires_grad]
-        opt_name = optimizer_cfg.get("name", "adamw").lower() if optimizer_cfg else "adamw"
-        lr = optimizer_cfg.get("lr", 1e-4) if optimizer_cfg else 1e-4
-        wd = optimizer_cfg.get("weight_decay", 1e-5) if optimizer_cfg else 1e-5
-        self.optimizer = AdamW(params, lr=lr, weight_decay=wd) if opt_name == "adamw" else optim.Adam(params, lr=lr, weight_decay=wd)
+        if optimizer_cfg is None:
+            self.optimizer = AdamW(params, lr=1e-4, weight_decay=1e-5)
+        else:
+            opt_name = optimizer_cfg.get("name", "adamw").lower()
+            lr = optimizer_cfg.get("lr", 1e-4)
+            wd = optimizer_cfg.get("weight_decay", 1e-5)
+            if opt_name == "adamw":
+                self.optimizer = AdamW(params, lr=lr, weight_decay=wd)
+            else:
+                self.optimizer = optim.Adam(params, lr=lr, weight_decay=wd)
 
-        # scheduler
-        self.scheduler = None
-        if scheduler_cfg:
+        if scheduler_cfg is None:
+            self.scheduler = None
+        else:
             stype = scheduler_cfg.get("type")
             if stype == "cosine":
                 self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=scheduler_cfg.get("T_max", 10))
             elif stype == "step":
                 self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=scheduler_cfg.get("step_size", 5), gamma=scheduler_cfg.get("gamma", 0.1))
+            else:
+                self.scheduler = None
 
         self.use_amp = use_amp
         self.scaler = torch.cuda.amp.GradScaler() if (use_amp and torch.cuda.is_available()) else None
 
-    def train(self, epochs=3):
-        print(f"\nDevice: {self.device}")
+    def train(self, epochs=3, log_interval=50):
+        print(f"\nDevice: {self.device} — Starting training for {epochs} epochs")
         history = {"train_loss": [], "val_loss": [], "f1_macro": []}
         for epoch in range(epochs):
             self.model.train()
             total_loss = 0.0
-            for imgs, labels in tqdm(self.train_loader, desc=f"Train Epoch {epoch+1}/{epochs}"):
+            step = 0
+            loop = tqdm(self.train_loader, desc=f"Train Epoch {epoch+1}/{epochs}", leave=False)
+            for imgs, labels in loop:
                 imgs, labels = imgs.to(self.device), labels.to(self.device)
                 self.optimizer.zero_grad()
                 if self.scaler:
@@ -174,21 +178,32 @@ class Trainer:
                     loss = self.criterion(outputs, labels)
                     loss.backward()
                     self.optimizer.step()
+
                 total_loss += loss.item()
-            if self.scheduler:
-                try: self.scheduler.step()
-                except Exception: pass
+                step += 1
+                if step % log_interval == 0:
+                    loop.set_postfix(loss=total_loss/step)
+
+            if self.scheduler is not None:
+                try:
+                    self.scheduler.step()
+                except Exception:
+                    pass
+
             val_loss, f1_macro = self.evaluate()
-            history["train_loss"].append(total_loss / len(self.train_loader))
+            history["train_loss"].append(total_loss / max(1, len(self.train_loader)))
             history["val_loss"].append(val_loss)
             history["f1_macro"].append(f1_macro)
-            print(f"Train Loss: {total_loss:.4f} | Val Loss: {val_loss:.4f} | F1 Macro: {f1_macro:.4f}")
+            print(f"Epoch {epoch+1}/{epochs} — TrainLoss: {total_loss:.4f} | ValLoss: {val_loss:.4f} | F1 Macro: {f1_macro:.4f}")
+
             if f1_macro > self.best_f1:
                 self.best_f1 = f1_macro
                 torch.save(self.model.state_dict(), f"{self.save_dir}/best_model.pt")
                 print("Saved BEST MODEL")
+
         self.save_history(history)
-        self.test()
+        # run final test using best model
+        self._load_best_and_test()
         return history
 
     def evaluate(self):
@@ -196,7 +211,7 @@ class Trainer:
         preds, trues = [], []
         total_loss = 0.0
         with torch.no_grad():
-            for imgs, labels in tqdm(self.val_loader, desc="Validation"):
+            for imgs, labels in tqdm(self.val_loader, desc="Validation", leave=False):
                 imgs, labels = imgs.to(self.device), labels.to(self.device)
                 outputs = self.model(imgs)
                 loss = self.criterion(outputs, labels)
@@ -205,19 +220,29 @@ class Trainer:
                 trues.extend(labels.cpu().numpy())
         f1_macro = f1_score(trues, preds, average="macro")
         self.save_confusion(trues, preds, "val")
-        return total_loss / len(self.val_loader), f1_macro
+        return total_loss / max(1, len(self.val_loader)), f1_macro
+
+    def _load_best_and_test(self):
+        best_path = os.path.join(self.save_dir, "best_model.pt")
+        if os.path.exists(best_path):
+            print("Loading best model for TEST:", best_path)
+            self.model.load_state_dict(torch.load(best_path, map_location=self.device))
+        else:
+            print("Best model not found; using current weights for TEST")
+        self.test()
 
     def test(self):
         print("Running TEST evaluation")
         self.model.eval()
         preds, trues = [], []
         with torch.no_grad():
-            for imgs, labels in tqdm(self.test_loader, desc="Testing"):
+            for imgs, labels in tqdm(self.test_loader, desc="Testing", leave=False):
                 imgs, labels = imgs.to(self.device), labels.to(self.device)
                 outputs = self.model(imgs)
                 preds.extend(torch.argmax(outputs, dim=1).cpu().numpy())
                 trues.extend(labels.cpu().numpy())
         acc = accuracy_score(trues, preds)
+        prec, rec, f1, support = precision_recall_fscore_support(trues, preds, zero_division=0)
         macro_f1 = f1_score(trues, preds, average="macro")
         report = classification_report(trues, preds, target_names=self.class_names)
         print("\n===== TEST METRICS =====")
@@ -245,44 +270,34 @@ class Trainer:
         plt.close()
 
 # ================================================================
-# Transforms (ABC rules tetap ada)
+# Transforms (disesuaikan ImageNet mean/std dan ukuran default Swin)
 # ================================================================
-IMG_SIZE = 224
-transform_asymmetry = A.Compose([
+IMG_SIZE = 224  # Swin base patch4 window7_224 expects 224
+
+imagenet_mean = (0.485, 0.456, 0.406)
+imagenet_std  = (0.229, 0.224, 0.225)
+
+transform_train = A.Compose([
     A.Resize(IMG_SIZE, IMG_SIZE),
     A.HorizontalFlip(p=0.5),
-    A.VerticalFlip(p=0.2),
-    A.Rotate(limit=20, p=0.5),
-    A.CoarseDropout(max_holes=1, max_height=30, max_width=30, p=0.4),
-    A.GaussNoise(var_limit=(5.0, 20.0), p=0.2),
-    A.Normalize(),
+    A.VerticalFlip(p=0.1),
+    A.Rotate(limit=20, p=0.4),
+    A.RandomResizedCrop(IMG_SIZE, IMG_SIZE, scale=(0.8,1.0), p=0.4),
+    A.CoarseDropout(max_holes=1, max_height=30, max_width=30, p=0.2),
+    A.GaussNoise(var_limit=(5.0, 20.0), p=0.15),
+    A.RandomBrightnessContrast(brightness_limit=0.15, contrast_limit=0.15, p=0.5),
+    A.Normalize(mean=imagenet_mean, std=imagenet_std),
     ToTensorV2(),
 ])
-transform_border = A.Compose([
-    A.Resize(IMG_SIZE, IMG_SIZE),
-    A.RandomBrightnessContrast(brightness_limit=0.08, contrast_limit=0.12, p=0.6),
-    A.CLAHE(clip_limit=2.0, tile_grid_size=(8,8), p=0.4),
-    A.ElasticTransform(alpha=10, sigma=5, p=0.3),
-    A.ShiftScaleRotate(shift_limit=0.02, scale_limit=0.06, rotate_limit=15, p=0.4),
-    A.Normalize(),
-    ToTensorV2(),
-])
-transform_color = A.Compose([
-    A.Resize(IMG_SIZE, IMG_SIZE),
-    A.RandomBrightnessContrast(p=0.6),
-    A.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=20, val_shift_limit=10, p=0.6),
-    A.RGBShift(r_shift_limit=10, g_shift_limit=10, b_shift_limit=10, p=0.3),
-    A.Normalize(),
-    ToTensorV2(),
-])
+
 transform_val = A.Compose([
     A.Resize(IMG_SIZE, IMG_SIZE),
-    A.Normalize(),
+    A.Normalize(mean=imagenet_mean, std=imagenet_std),
     ToTensorV2(),
 ])
 
 # ================================================================
-# Compute class weights
+# Utility: compute class weights from train csv (pytorch tensor)
 # ================================================================
 def compute_class_weights_from_csv(train_csv):
     df = pd.read_csv(train_csv)
@@ -298,55 +313,78 @@ def compute_class_weights_from_csv(train_csv):
 # MAIN
 # ================================================================
 if __name__ == "__main__":
+    # Paths (sesuaikan)
     train_csv = r"./Dataset HAM1000/train.csv"
     val_csv   = r"./Dataset HAM1000/val_public.csv"
     test_csv  = r"./Dataset HAM1000/test_hidden.csv"
     img_root  = r"./root/preprocessed_datasets"
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model_names = ["convnext", "efficientnet_v2_m", "densenet"]
-    model_configs = {
-        "convnext": {"transform": transform_color, "batch_size": 32, "epochs": 50, "optimizer_cfg": {"name":"adamw","lr":1e-4,"weight_decay":1e-2}, "scheduler_cfg":{"type":"cosine","T_max":20}},
-        "efficientnet_v2_m": {"transform": transform_asymmetry, "batch_size": 32, "epochs": 50, "optimizer_cfg":{"name":"adamw","lr":1e-4,"weight_decay":1e-3}, "scheduler_cfg":{"type":"cosine","T_max":18}},
-        "densenet": {"transform": transform_border, "batch_size": 32, "epochs":50, "optimizer_cfg":{"name":"adamw","lr":1e-4,"weight_decay":1e-3}, "scheduler_cfg":{"type":"cosine","T_max":16}},
+    # Hanya satu model: Swin (variant timm)
+    swin_variant = "swin_base_patch4_window7_224"  # bisa ganti: swin_small_*, swin_large_*, atau swinv2* jika tersedia di timm
+
+    # Config
+    cfg = {
+        "transform_train": transform_train,
+        "transform_val": transform_val,
+        "batch_size": 32,
+        "epochs": 50,
+        "optimizer_cfg": {"name": "adamw", "lr": 3e-5, "weight_decay": 1e-2},  # lr lower karena full finetune transformer
+        "scheduler_cfg": {"type": "cosine", "T_max": 20}
     }
 
+    # prepare labels / class names
     df_train = pd.read_csv(train_csv)
     unique_labels = sorted(df_train['label_idx'].unique().tolist())
     class_names = [f"class_{int(l)}" for l in unique_labels]
     num_classes = len(unique_labels)
-    factory = ModelFactory(num_classes=num_classes)
-    summary_results = []
 
-    for model_name in model_names:
-        cfg = model_configs[model_name]
-        print(f"\n========== TRAINING {model_name.upper()} ==========")
-        timer = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_dir = f"./results_{timer}_{model_name}"
-        os.makedirs(save_dir, exist_ok=True)
+    factory = ModelFactory(num_classes=num_classes, swin_variant=swin_variant)
 
-        train_set = HAM10000Dataset(train_csv, img_root, transform=cfg["transform"])
-        val_set = HAM10000Dataset(val_csv, img_root, transform=transform_val)
-        test_set = HAM10000Dataset(test_csv, img_root, transform=transform_val)
+    # Make datasets / loaders
+    print("Preparing datasets and dataloaders...")
+    train_set = HAM10000Dataset(train_csv, img_root, transform=cfg["transform_train"])
+    val_set   = HAM10000Dataset(val_csv, img_root, transform=cfg["transform_val"])
+    test_set  = HAM10000Dataset(test_csv, img_root, transform=cfg["transform_val"])
 
-        weights = compute_class_weights_from_csv(train_csv)
-        batch_size = cfg["batch_size"]
-        num_workers = min(8, os.cpu_count() or 4)
-        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
-        val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
-        test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    weights = compute_class_weights_from_csv(train_csv)
 
-        cnn = factory.create(model_name)
-        trainer = Trainer(model=cnn, train_loader=train_loader, val_loader=val_loader, test_loader=test_loader,
-                          device=device, class_weights=weights, save_dir=save_dir, class_names=class_names,
-                          optimizer_cfg=cfg["optimizer_cfg"], scheduler_cfg=cfg["scheduler_cfg"], use_amp=True)
+    batch_size = cfg["batch_size"]
+    num_workers = min(8, os.cpu_count() or 4)
+    pin_memory = True if torch.cuda.is_available() else False
 
-        history = trainer.train(epochs=cfg["epochs"])
-        summary_results.append([model_name, history["f1_macro"][-1], history["val_loss"][-1]])
-        trainer.evaluate()
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
+    val_loader   = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
+    test_loader  = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
 
-    print("\n===== FINAL SUMMARY TABLE =====")
-    print("Model | F1 Macro | Val Loss")
-    for row in summary_results:
-        print(f"{row[0]:15s} | {row[1]:.4f} | {row[2]:.4f}")
-    notif("DONE", str(summary_results))
+    # create model (full finetune)
+    model = factory.create()
+    print("Model created:", swin_variant)
+    # print number of params (optionally)
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total params: {total_params/1e6:.2f}M — Trainable: {trainable_params/1e6:.2f}M")
+
+    timer = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_dir = f"./results_{timer}_swin"
+    os.makedirs(save_dir, exist_ok=True)
+
+    trainer = Trainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        test_loader=test_loader,
+        device=device,
+        class_weights=weights,
+        save_dir=save_dir,
+        class_names=class_names,
+        optimizer_cfg=cfg["optimizer_cfg"],
+        scheduler_cfg=cfg["scheduler_cfg"],
+        use_amp=True
+    )
+
+    history = trainer.train(epochs=cfg["epochs"])
+    # final evaluate (already done in trainer._load_best_and_test)
+    print("Training finished.")
+    notif("DONE", f"[Swin training] saved to {save_dir}")
