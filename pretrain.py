@@ -645,7 +645,7 @@ if __name__ == "__main__":
             scheduler_cfg=cfg["scheduler_cfg"],
             use_amp=True
         )
-        # dataset and loaders
+        # dataset and loaderss
 
         print("TRAINMODEL DATASETS")
         history = trainer.train(epochs=cfg["epochs"])
