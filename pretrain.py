@@ -611,6 +611,7 @@ if __name__ == "__main__":
         os.makedirs(save_dir, exist_ok=True)
 
         # dataset and loaders
+        print("LOADER DATASETS")
         train_set = HAM10000MultimodalDataset(train_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=cfg["transform"])
         val_set   = HAM10000MultimodalDataset(val_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform_val)
         test_set  = HAM10000MultimodalDataset(test_csv, img_root, sex_map, loc_map, age_mean, age_std, transform=transform_val)
@@ -644,7 +645,9 @@ if __name__ == "__main__":
             scheduler_cfg=cfg["scheduler_cfg"],
             use_amp=True
         )
+        # dataset and loaders
 
+        print("TRAINMODEL DATASETS")
         history = trainer.train(epochs=cfg["epochs"])
 
         summary_results.append([model_name, history["f1_macro"][-1], history["val_loss"][-1]])
