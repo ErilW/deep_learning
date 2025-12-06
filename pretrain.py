@@ -1,291 +1,174 @@
-"""
-FULL SWIN-ONLY PIPELINE (224×224 fixed)
-Semua model Swin yang kompatibel akan training otomatis.
-Model yang tidak support 224 akan di-skip otomatis.
-"""
-
 import os
-import random
-import warnings
-import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
-from torch.optim import AdamW
-from torch.utils.data import DataLoader, Dataset
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
-
 import timm
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 
-from sklearn.metrics import (
-    f1_score, classification_report
-)
-
-warnings.filterwarnings("ignore")
-
-# ============================================================
-# SEED
-# ============================================================
-seed = 42
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
-
-
-# ============================================================
-# Label Smoothing Loss
-# ============================================================
-LabelSmoothingLoss = lambda weight=None, smoothing=0.1: nn.CrossEntropyLoss(
-    weight=weight,
-    label_smoothing=smoothing
-)
-
-
-# ============================================================
-# DATASET
-# ============================================================
-class HAM10000Dataset(Dataset):
-    def __init__(self, csv_path, img_root, transform=None):
-        self.df = pd.read_csv(csv_path)
-        self.img_root = img_root
+# ==========================================================
+# DATASET (identik dengan notebook)
+# ==========================================================
+class ImageFolderDataset(Dataset):
+    def __init__(self, root, transform=None):
+        self.root = root
+        self.files = []
+        self.targets = []
         self.transform = transform
 
+        classes = sorted(os.listdir(root))
+        self.class_to_idx = {c: i for i, c in enumerate(classes)}
+
+        for c in classes:
+            class_dir = os.path.join(root, c)
+            for f in os.listdir(class_dir):
+                if f.lower().endswith((".jpg", ".png", ".jpeg")):
+                    self.files.append(os.path.join(class_dir, f))
+                    self.targets.append(self.class_to_idx[c])
+
     def __len__(self):
-        return len(self.df)
-
-    def _find_image_path(self, image_id):
-        exts = ['.jpg', '.jpeg', '.png']
-        for ext in exts:
-            p = os.path.join(self.img_root, image_id + ext)
-            if os.path.exists(p):
-                return p
-
-        for root, _, files in os.walk(self.img_root):
-            for f in files:
-                if f.startswith(image_id):
-                    return os.path.join(root, f)
-
-        raise FileNotFoundError(f"{image_id} not found")
+        return len(self.files)
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        image_id = str(row["image_id"])
-        label = int(row["label_idx"])
-
-        path = self._find_image_path(image_id)
-        img = Image.open(path).convert("RGB")
+        img = Image.open(self.files[idx]).convert("RGB")
+        target = self.targets[idx]
 
         if self.transform:
-            img = self.transform(image=np.array(img))["image"]
-        else:
-            img = ToTensorV2()(image=np.array(img))["image"]
+            img = self.transform(img)
 
-        return img, label
+        return img, target
 
 
-# ============================================================
-# TRAINER
-# ============================================================
+# ==========================================================
+# TRANSFORM (100% sama dengan notebook)
+# ==========================================================
+train_tf = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),  # ALWAYS float32 (0–1)
+    transforms.Normalize([0.485, 0.456, 0.406],
+                         [0.229, 0.224, 0.225]),
+])
+
+test_tf = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406],
+                         [0.229, 0.224, 0.225]),
+])
+
+
+# ==========================================================
+# TRAINER (identik dengan notebook)
+# ==========================================================
 class Trainer:
-    def __init__(self, model, train_loader, val_loader, test_loader,
-                 device, class_weights, save_dir, class_names):
-
+    def __init__(self, model, trainloader, testloader, device):
         self.model = model.to(device)
+        self.trainloader = trainloader
+        self.testloader = testloader
         self.device = device
 
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-        self.test_loader = test_loader
+        self.crit = nn.CrossEntropyLoss()
+        self.opt = optim.Adam(self.model.parameters(), lr=1e-4)
 
-        self.class_names = class_names
-        self.save_dir = save_dir
-        os.makedirs(save_dir, exist_ok=True)
-
-        self.criterion = LabelSmoothingLoss(class_weights.to(device), 0.1)
-
-        params = [p for p in self.model.parameters() if p.requires_grad]
-        self.optimizer = AdamW(params, lr=1e-4, weight_decay=1e-4)
-
-        self.best_f1 = -1
-
-    # -------------------------------------
-    def train(self, epochs=3):
-        for ep in range(epochs):
-            self.model.train()
-            total_loss = 0
-
-            loop = tqdm(self.train_loader, desc=f"Epoch {ep+1}/{epochs}")
+    def train(self, epochs):
+        self.model.train()
+        for e in range(epochs):
+            loop = tqdm(self.trainloader, total=len(self.trainloader),
+                        desc=f"Epoch {e+1}/{epochs}")
 
             for img, label in loop:
-                img, label = img.to(self.device), label.to(self.device)
-                self.optimizer.zero_grad()
 
+                # =============================
+                # SAFETY PATCH (fix uint8 bug)
+                # =============================
+                img = img.to(self.device)
+                label = label.to(self.device)
+
+                if img.dtype != torch.float32:
+                    img = img.float() / 255.0
+
+                self.opt.zero_grad()
                 out = self.model(img)
-                loss = self.criterion(out, label)
+                loss = self.crit(out, label)
                 loss.backward()
-                self.optimizer.step()
+                self.opt.step()
 
-                total_loss += loss.item()
-                loop.set_postfix(loss=total_loss / (len(loop) + 1))
+                loop.set_postfix(loss=loss.item())
 
-            val_loss, val_f1 = self.evaluate()
-            print(f"[EPOCH {ep+1}] TrainLoss={total_loss:.3f} | ValLoss={val_loss:.3f} | F1={val_f1:.3f}")
-
-            if val_f1 > self.best_f1:
-                self.best_f1 = val_f1
-                torch.save(self.model.state_dict(), f"{self.save_dir}/best.pt")
-                print(">> BEST UPDATED")
-
-        self.model.load_state_dict(torch.load(f"{self.save_dir}/best.pt"))
-        self.test()
-
-    # -------------------------------------
     def evaluate(self):
         self.model.eval()
-        preds, trues = [], []
-        total_loss = 0
+        correct = 0
+        total = 0
 
         with torch.no_grad():
-            for img, label in self.val_loader:
-                img, label = img.to(self.device), label.to(self.device)
+            for img, label in self.testloader:
+
+                img = img.to(self.device)
+                label = label.to(self.device)
+
+                if img.dtype != torch.float32:
+                    img = img.float() / 255.0
+
                 out = self.model(img)
-                loss = self.criterion(out, label)
+                pred = out.argmax(dim=1)
+                correct += (pred == label).sum().item()
+                total += label.size(0)
 
-                total_loss += loss.item()
-                preds += torch.argmax(out, 1).cpu().numpy().tolist()
-                trues += label.cpu().numpy().tolist()
-
-        return total_loss / max(1, len(self.val_loader)), f1_score(trues, preds, average="macro")
-
-    # -------------------------------------
-    def test(self):
-        self.model.eval()
-        preds, trues = [], []
-
-        with torch.no_grad():
-            for img, label in self.test_loader:
-                img, label = img.to(self.device), label.to(self.device)
-                out = self.model(img)
-
-                preds += torch.argmax(out, 1).cpu().numpy().tolist()
-                trues += label.cpu().numpy().tolist()
-
-        print("\n===== FINAL TEST =====")
-        print(classification_report(trues, preds, target_names=self.class_names))
-        print("MACRO F1:", f1_score(trues, preds, average="macro"))
+        acc = correct / total
+        return acc
 
 
-# ============================================================
-# LIST SWIN FIXED 224
-# ============================================================
-def get_swin_224_only():
-
-    all_models = timm.list_models("swin*")
-
-    allowed = []
-    for m in all_models:
-        # Hanya Swin-S / Swin-T / Swin-B (V1) yg compatible 224
-        if any(x in m for x in ["tiny", "small", "base"]):
-            allowed.append(m)
-
-        # Skip pretrained 384 models (large/huge)
-        if "large" in m or "huge" in m:
-            continue
-
-    allowed = sorted(list(set(allowed)))
-    return allowed
+# ==========================================================
+# MODEL BUILDER (Swin 224 semua)
+# ==========================================================
+def build_swin(model_name, num_classes):
+    return timm.create_model(
+        model_name,
+        pretrained=True,
+        img_size=224,     # Force 224 even for models that default 384
+        num_classes=num_classes
+    )
 
 
-# ============================================================
-# MAIN
-# ============================================================
+# ==========================================================
+# MAIN PIPELINE
+# ==========================================================
 def main():
 
-    # ========= PATH KAMU =========
-    TRAIN_CSV = r"./Dataset HAM1000/train.csv"
-    VAL_CSV   = r"./Dataset HAM1000/val_public.csv"
-    TEST_CSV  = r"./Dataset HAM1000/test_hidden.csv"
-    IMG_ROOT  = r"./root/preprocessed_datasets"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    class_names = ["akiec","bcc","bkl","df","mel","nv","vasc"]
-    num_classes = len(class_names)
+    # SESUAIKAN PATH
+    train_dir = "/workspace/dataset/train"
+    test_dir  = "/workspace/dataset/test"
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    trainset = ImageFolderDataset(train_dir, train_tf)
+    testset  = ImageFolderDataset(test_dir,  test_tf)
 
-    train_tf = A.Compose([
-        A.Resize(224, 224),
-        A.HorizontalFlip(0.5),
-        A.VerticalFlip(0.5),
-        A.RandomBrightnessContrast(0.5),
-        ToTensorV2()
-    ])
+    trainloader = DataLoader(trainset, batch_size=32, shuffle=True, num_workers=4)
+    testloader  = DataLoader(testset,  batch_size=32, shuffle=False, num_workers=4)
 
-    test_tf = A.Compose([
-        A.Resize(224, 224),
-        ToTensorV2()
-    ])
+    # LIST MODEL YANG MAU DITEST (dari kecil → besar)
+    swin_models = [
+        "swin_tiny_patch4_window7_224",
+        "swin_small_patch4_window7_224",
+        "swin_base_patch4_window7_224",
+        # tambah kalau mau
+    ]
 
-    # Dataset
-    train_ds = HAM10000Dataset(TRAIN_CSV, IMG_ROOT, train_tf)
-    val_ds   = HAM10000Dataset(VAL_CSV, IMG_ROOT, test_tf)
-    test_ds  = HAM10000Dataset(TEST_CSV, IMG_ROOT, test_tf)
+    print("\n=== Evaluating Swin Family ===")
 
-    # class weights
-    counts = train_ds.df["label_idx"].value_counts().sort_index().values
-    class_weights = torch.tensor((1 / (counts + 1e-6)), dtype=torch.float32)
+    for name in swin_models:
+        print(f"\n🔥 Model: {name}")
 
-    # Loaders
-    train_ld = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=2)
-    val_ld   = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=2)
-    test_ld  = DataLoader(test_ds, batch_size=16, shuffle=False, num_workers=2)
+        model = build_swin(name, num_classes=len(trainset.class_to_idx))
 
-    # Ambil Swin yg fix 224
-    swin_list = get_swin_224_only()
-
-    print("\n=========== SWIN LIST (224×224) ===========")
-    for m in swin_list:
-        print(m)
-
-    print("\n=========== TRAINING ALL MODEL ===========")
-
-    for variant in swin_list:
-        print(f"\n\n==============================")
-        print(f"   TRAINING MODEL: {variant}")
-        print("==============================")
-
-        save_dir = f"./results_swin/{variant}"
-        os.makedirs(save_dir, exist_ok=True)
-
-        try:
-            # forcing 224×224
-            model = timm.create_model(
-                variant,
-                pretrained=True,
-                num_classes=num_classes,
-                img_size=224
-            )
-
-            # override config
-            model.default_cfg["input_size"] = (3, 224, 224)
-
-        except Exception as e:
-            print(f"SKIPPED MODEL: {variant} (reason: {e})")
-            continue
-
-        trainer = Trainer(
-            model, train_ld, val_ld, test_ld,
-            device=device,
-            class_weights=class_weights,
-            save_dir=save_dir,
-            class_names=class_names
-        )
-
+        trainer = Trainer(model, trainloader, testloader, device)
         trainer.train(epochs=3)
 
-        print(f">>> DONE: {variant}")
+        acc = trainer.evaluate()
+        print(f"➡️ FINAL ACC: {acc:.4f}")
 
 
 if __name__ == "__main__":
