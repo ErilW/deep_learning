@@ -16,6 +16,9 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import warnings
+
+from utils import notif
+
 warnings.filterwarnings("ignore")
 
 # albumentations
@@ -651,3 +654,5 @@ if __name__ == "__main__":
     print("Model | F1 Macro | Val Loss")
     for row in summary_results:
         print(f"{row[0]:15s} | {row[1]:.4f} | {row[2]:.4f}")
+
+    notif("DONE", str(summary_results))
