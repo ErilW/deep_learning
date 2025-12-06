@@ -561,8 +561,8 @@ if __name__ == "__main__":
     model_configs = {
         "convnext": {
             "transform": transform_color,
-            "batch_size": 48,
-            "epochs": 20,
+            "batch_size": 32,
+            "epochs": 50,
             "optimizer_cfg": {"name": "adamw", "lr": 2e-4, "weight_decay": 1e-2},
             "scheduler_cfg": {"type": "cosine", "T_max": 20},
             "use_prior": True,
@@ -570,8 +570,8 @@ if __name__ == "__main__":
         },
         "efficientnet_v2_m": {
             "transform": transform_asymmetry,
-            "batch_size": 64,
-            "epochs": 18,
+            "batch_size": 32,
+            "epochs": 50,
             "optimizer_cfg": {"name": "adamw", "lr": 2e-4, "weight_decay": 1e-3},
             "scheduler_cfg": {"type": "cosine", "T_max": 18},
             "use_prior": False,
@@ -579,8 +579,8 @@ if __name__ == "__main__":
         },
         "densenet": {
             "transform": transform_border,
-            "batch_size": 64,
-            "epochs": 16,
+            "batch_size": 32,
+            "epochs": 50,
             "optimizer_cfg": {"name": "adamw", "lr": 1e-4, "weight_decay": 1e-3},
             "scheduler_cfg": {"type": "cosine", "T_max": 16},
             "use_prior": False,
@@ -645,6 +645,7 @@ if __name__ == "__main__":
         history = trainer.train(epochs=cfg["epochs"])
 
         summary_results.append([model_name, history["f1_macro"][-1], history["val_loss"][-1]])
+        trainer.evaluate()
 
     print("\n===== FINAL SUMMARY TABLE =====")
     print("Model | F1 Macro | Val Loss")
