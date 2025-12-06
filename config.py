@@ -1,4 +1,4 @@
-CLASS_NAMES = class_names = class_name = [
+class_names = [
     "akiec",  # Actinic keratoses and intraepithelial carcinoma / Bowen's disease
     "bcc",    # Basal cell carcinoma
     "bkl",    # Benign keratosis-like lesions
@@ -11,7 +11,7 @@ CLASS_NAMES = class_names = class_name = [
 HYPERPARAMS = {
     "model_name": "YOLOV11m-cls",
     "input_shape": (224, 224, 3),
-    "num_classes": len(CLASS_NAMES),
+    "num_classes": len(class_names),
 
     "optimizer": "Adam",
     "learning_rate": 1e-3,

@@ -20,13 +20,12 @@ def preprocessing(ham_path, segmentations_path, output_dir="./preprocessed_datas
         dataset_dir=ham_path,
         segmentations_dir=segmentations_path,
         output_root=output_dir,
-        output_root_segment=output_segmentations_dir
     )
 
     preprocessor.load_csv()
     preprocessor.create_all_datasets()
     # preprocessor.plot_train_distribution()
-    preprocessor.apply_segmentation_masks(True, size=size)
+    preprocessor.apply_segmentation_masks(output_segmentations_dir, True, size=size, )
 
 
 def main():
@@ -46,46 +45,8 @@ def main():
         output_segmentations_dir=datasets_segmentation,
         size=None
     )
-    # output_root="./root/augmented_balanced_dataset5"
-    # model = YOLO(r"yolo11x-cls.pt")
-
-    # path = create_yolo_balanced_dataset(input_root=datasets_segmentation, output_root=output_root, ratio=2 )
-
-    # mini summary
-    # train 14: balance: 0.5, full aug:0.72
-    # train randomsearch {'lr0': 0.01, 'momentum': 0.9, 'weight_decay': 0.0001, 'optimizer': 'SGD'}, balance: 0.5, half aug: 0.75
-    # train 17 {'lr0': 0.01, 'momentum': 0.9, 'weight_decay': 0.0001, 'optimizer': 'SGD'}, balance: 0.5, full aug: 0.70
-    # train 18 {'lr0': 0.01, 'momentum': 0.9, 'weight_decay': 0.0001, 'optimizer': 'SGD'}, balance: 0.5, half aug, Patience:    None, copy server: 0.70
-
-    # data = model.train(
-    #     data=output_root,
-    #     patience=20,
-    #     epochs=100,
-    #     batch=16,
-    #     imgsz=640,
-    #     lr0=0.01,
-    #     momentum=0.9,
-    #     weight_decay=0.0001,
-    #     device=0,
-    #     optimizer="SGD",
-    #     augment=False,
-    #     mosaic=0.0,
-    #     mixup=0.0,
-    #     copy_paste=0.0,
-    #     auto_augment=None,
-    #     erasing=0.0,
-    #     hsv_h=0.0,
-    #     hsv_s=0.0,
-    #     hsv_v=0.0,
-    #     translate=0.0,
-    #     scale=0.0,
-    #     fliplr=0.0,
-    #     flipud=0.0,
-    # )
-
 
     notif(None, None, None, None, None)
-    # evaluate_yolo_classification()
 
 
 if __name__ == "__main__":

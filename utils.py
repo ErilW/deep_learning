@@ -454,7 +454,7 @@ def safe_unfreeze_blocks(backbone, n_blocks=2):
     return blocks_to_unfreeze
 
 
-def notif(timer, macro_f1, overall_acc, hyperparams, report=""):
+def notif(title, msg):
     """
     Mengirim notifikasi ke server.
     - timer: waktu mulai training
@@ -466,14 +466,9 @@ def notif(timer, macro_f1, overall_acc, hyperparams, report=""):
     url = "http://38.134.41.59:8080/message?token=AaekWDGvjiGO49P"
 
     try:
-        elapsed = time.perf_counter() - timer
         payload = {
-            "title": "Train model DARI VAST AI, done!",
-            "message": f"Time Training: {elapsed}s\n"
-                       f"Macro F1: {macro_f1}\n"
-                       f"Accuracy: {overall_acc}\n"
-                       f"Hyperparams: {hyperparams}\n"
-                       f"Report:\n{report}",
+            "title": title,
+            "message": msg,
             "priority": 10
         }
     except Exception as e:

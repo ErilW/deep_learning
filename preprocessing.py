@@ -71,22 +71,23 @@ class SkinDatasetPreprocessor:
                  dataset_dir,
                  base_image_dir="./Dataset HAM1000",
                  output_root="./preprocessed_datasets",
-                 output_root_segment="./preprocessed_datasets_segment",
                  segmentations_dir=None):
 
         self.base_image_dir = base_image_dir
         self.dataset_dir = dataset_dir
         self.output_root = output_root
-        self.output_root_segment = output_root_segment
         self.segmentations_dir = segmentations_dir
 
+        if not os.path.exists(self.base_image_dir):
+            os.makedirs(self.base_image_dir, exist_ok=True)
+            print("Downloading HAM10000 dataset...")
 
-        gdown.download_folder(
-            url="https://drive.google.com/drive/folders/17jgvIeKQnUvk6DmdUJWCIA_fcMxbZ_h_",
-            output=self.base_image_dir,
-            quiet=False,
-            use_cookies=False,
-        )
+            gdown.download_folder(
+                url="https://drive.google.com/drive/folders/17jgvIeKQnUvk6DmdUJWCIA_fcMxbZ_h_",
+                output=self.base_image_dir,
+                quiet=False,
+                use_cookies=False,
+            )
 
         self.dict_datasets = {
             "test": "test_hidden.csv",
@@ -148,7 +149,7 @@ class SkinDatasetPreprocessor:
     # ============================================================
     #       SAFE & TQDM — APPLY SEGMENTATION MASKS
     # ============================================================
-    def apply_segmentation_masks(self, do_crop=True, size=(224, 224)):
+    def apply_segmentation_masks(self, output_root_segment, do_crop=True, size=(224, 224)):
         import cv2
         import numpy as np
         from PIL import Image
@@ -160,14 +161,14 @@ class SkinDatasetPreprocessor:
         print(f"Segmentation folder: {self.segmentations_dir}\n")
 
         # Skip if already exists and not empty
-        if os.path.exists(self.output_root_segment):
-            if any(os.scandir(self.output_root_segment)):
+        if os.path.exists(output_root_segment):
+            if any(os.scandir(output_root_segment)):
                 print("[SKIP] Folder segmentasi sudah ada dan berisi file.")
                 return
 
         for split in ["train", "val", "test"]:
             src_split_path = os.path.join(self.output_root, split)
-            dst_split_path = os.path.join(self.output_root_segment, split)
+            dst_split_path = os.path.join(output_root_segment, split)
 
             if not os.path.isdir(src_split_path):
                 print(f"[SKIP] Folder '{split}' tidak ditemukan.")
