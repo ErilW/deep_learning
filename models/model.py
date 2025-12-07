@@ -1,214 +1,170 @@
+# swinv2_full_pipeline.py
 import os
-import random
-import time
-from datetime import datetime
-
 import numpy as np
-import requests
 import torch
-from torch import nn
-from ultralytics import YOLO
-from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
+from sklearn.metrics import f1_score, accuracy_score, classification_report
+from tqdm import tqdm
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from timm import create_model
 
+# ==============================
+# CONFIGURATION
+# ==============================
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+BATCH_SIZE = 16
+IMG_SIZE = 224
+EPOCHS = 30
+LEARNING_RATE = 0.01
+WEIGHT_DECAY = 0.0005
+MOMENTUM = 0.937
 
-# ============================================================
-# FIXED FOCAL LOSS + ADAPTER UNTUK YOLO-CLS
-# ============================================================
+# Model options: tiny, small, base
+MODEL_NAME = "swinv2_tiny_patch4_window8_256"
+DATA_DIR = r"..\Dataset HAM1000\segmentation_masks"  # ganti sesuai dataset
+SAVE_DIR = "saved_models"
+os.makedirs(SAVE_DIR, exist_ok=True)
 
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.25, gamma=2.0):
-        super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.ce = nn.CrossEntropyLoss(reduction="none")
+# ==============================
+# AUGMENTATIONS (replicate notebook)
+# ==============================
+train_transforms = A.Compose([
+    A.Resize(IMG_SIZE, IMG_SIZE),
+    A.HorizontalFlip(p=0.5),
+    A.VerticalFlip(p=0.2),
+    A.RandomRotate90(p=0.3),
+    A.Transpose(p=0.2),
+    A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+    A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.3),
+    A.RGBShift(r_shift_limit=15, g_shift_limit=15, b_shift_limit=15, p=0.3),
+    A.CLAHE(clip_limit=4.0, p=0.3),
+    A.Blur(blur_limit=3, p=0.1),
+    A.MotionBlur(blur_limit=3, p=0.1),
+    A.CoarseDropout(max_holes=8, max_height=IMG_SIZE//10, max_width=IMG_SIZE//10, p=0.2),
+    A.Cutout(num_holes=8, max_h_size=IMG_SIZE//10, max_w_size=IMG_SIZE//10, p=0.2),
+    ToTensorV2()
+])
 
-    def forward(self, logits, targets):
-        ce_loss = self.ce(logits, targets)
-        pt = torch.exp(-ce_loss)
-        focal = self.alpha * (1 - pt) ** self.gamma * ce_loss
-        return focal.mean()
+val_transforms = A.Compose([
+    A.Resize(IMG_SIZE, IMG_SIZE),
+    ToTensorV2()
+])
 
+# ==============================
+# CUSTOM DATASET
+# ==============================
+class CustomImageDataset(Dataset):
+    def __init__(self, image_paths, labels, transform=None):
+        self.image_paths = image_paths
+        self.labels = labels
+        self.transform = transform
 
-# YOLO classification expects criterion.f(logits, targets)
-class FocalLossAdapter:
-    def __init__(self, alpha=0.25, gamma=2.0):
-        self.loss_fn = FocalLoss(alpha=alpha, gamma=gamma)
+    def __len__(self):
+        return len(self.image_paths)
 
-    def f(self, logits, targets):
-        return self.loss_fn(logits, targets)
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        label = self.labels[idx]
+        image = np.array(Image.open(img_path).convert("RGB"))
+        if self.transform:
+            image = self.transform(image=image)['image']
+        return image, label
 
+# ==============================
+# LOAD DATA
+# ==============================
+def load_dataset(data_dir):
+    classes = sorted(os.listdir(os.path.join(data_dir, "train")))
+    class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
 
-def on_setup(trainer):
-    m = getattr(trainer.model, "model", trainer.model)
-    m.criterion = FocalLossAdapter(alpha=0.25, gamma=2.0)
+    def get_paths_and_labels(split):
+        paths, labels = [], []
+        split_dir = os.path.join(data_dir, split)
+        for cls in classes:
+            cls_dir = os.path.join(split_dir, cls)
+            for fname in os.listdir(cls_dir):
+                paths.append(os.path.join(cls_dir, fname))
+                labels.append(class_to_idx[cls])
+        return paths, labels
 
-    trainer.loss_names = ["loss"]
-# ============================================================
+    train_paths, train_labels = get_paths_and_labels("train")
+    val_paths, val_labels = get_paths_and_labels("val")
 
+    train_dataset = CustomImageDataset(train_paths, train_labels, transform=train_transforms)
+    val_dataset = CustomImageDataset(val_paths, val_labels, transform=val_transforms)
 
-def notif(timer, macro_f1, hyperparams):
-    url = "http://38.134.41.59:8080/message?token=AaekWDGvjiGO49P"
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
 
-    try:
-        elapsed = time.perf_counter() - timer
-        payload = {
-            "title": "Train model DARI VAST AI, done!",
-            "message": f"Time Training: {elapsed}s\n"
-                       f"Macro F1: {macro_f1}\n"
-                       f"Hyperparams: {hyperparams}\n",
-            "priority": 10
-        }
-    except Exception as e:
-        payload = {
-            "title": "ERROR, Train Done but not working!",
-            "message": f"Training Done, Error Type: {e}",
-            "priority": 10
-        }
+    return train_loader, val_loader, len(classes)
 
-    try:
-        response = requests.post(url, data=payload)
-        if response.status_code == 200:
-            print("Pesan berhasil dikirim!")
-        else:
-            print("Gagal mengirim pesan:", response.text)
-    except Exception as e:
-        print("Gagal mengirim notifikasi:", e)
+train_loader, val_loader, num_classes = load_dataset(DATA_DIR)
+print(f"Number of classes: {num_classes}")
 
+# ==============================
+# MODEL
+# ==============================
+model = create_model(MODEL_NAME, pretrained=True, num_classes=num_classes)
+model = model.to(DEVICE)
 
-def evaluate_yolo_classification(model_path, test_dir: str):
-    model = model_path
-    class_names = model.names
-    class_list = [class_names[i] for i in range(len(class_names))]
+# ==============================
+# LOSS, OPTIMIZER, SCHEDULER
+# ==============================
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
-    y_true = []
-    y_pred = []
+# ==============================
+# TRAINING LOOP
+# ==============================
+best_f1 = 0.0
 
-    for class_name in class_list:
-        class_folder = os.path.join(test_dir, class_name)
+for epoch in range(EPOCHS):
+    model.train()
+    running_loss = 0.0
+    for images, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS} - Training"):
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
 
-        if not os.path.isdir(class_folder):
-            print(f"[WARNING] Missing test folder for class: {class_name}")
-            continue
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item() * images.size(0)
 
-        for filename in os.listdir(class_folder):
-            img_path = os.path.join(class_folder, filename)
+    epoch_loss = running_loss / len(train_loader.dataset)
+    print(f"Epoch {epoch+1}/{EPOCHS} - Train Loss: {epoch_loss:.4f}")
 
-            res = model.predict(img_path, verbose=False)[0]
-            pred_class_idx = res.probs.top1
+    # ==============================
+    # VALIDATION
+    # ==============================
+    model.eval()
+    val_preds, val_labels = [], []
+    with torch.no_grad():
+        for images, labels in tqdm(val_loader, desc=f"Epoch {epoch+1}/{EPOCHS} - Validation"):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            outputs = model(images)
+            preds = torch.argmax(outputs, dim=1)
+            val_preds.extend(preds.cpu().numpy())
+            val_labels.extend(labels.cpu().numpy())
 
-            y_true.append(class_list.index(class_name))
-            y_pred.append(pred_class_idx)
+    acc = accuracy_score(val_labels, val_preds)
+    f1 = f1_score(val_labels, val_preds, average="macro")
+    print(f"Validation Accuracy: {acc:.4f}, F1 Macro: {f1:.4f}")
 
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
+    if f1 > best_f1:
+        best_f1 = f1
+        torch.save(model.state_dict(), os.path.join(SAVE_DIR, f"{MODEL_NAME}_best.pth"))
+        print("Saved best model!")
 
-    cm = confusion_matrix(y_true, y_pred)
-    macro_f1 = f1_score(y_true, y_pred, average="macro")
+    scheduler.step()
 
-    return cm, macro_f1, class_list
-
-
-SAVE_ROOT = "../runs"
-os.makedirs(SAVE_ROOT, exist_ok=True)
-
-
-HYPERPARAM_SPACE = {
-    "lr0": [0.01],
-    "momentum": [0.90],
-    "weight_decay": [0.0001],
-    "optimizer": ["SGD"]
-}
-
-
-def random_sample_hyperparams():
-    return {k: random.choice(v) for k, v in HYPERPARAM_SPACE.items()}
-
-
-def fine_tune_model(base_model_path, train_data_path, test_dir, trial_id, imgsz):
-    hp = random_sample_hyperparams()
-    print(f"Trial {trial_id} hyperparams: {hp}")
-
-    timer = time.perf_counter()
-    model = YOLO(base_model_path)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    trial_folder = os.path.join(SAVE_ROOT, f"trial_{trial_id}_{timestamp}")
-    os.makedirs(trial_folder, exist_ok=True)
-
-    model.add_callback("on_train_start", on_setup)
-
-    model.train(
-        data=train_data_path,
-        epochs=50,
-        device=0,
-        batch=8,
-        patience=10,
-        lr0=hp["lr0"],
-        momentum=hp["momentum"],
-        weight_decay=hp["weight_decay"],
-        optimizer=hp["optimizer"],
-        imgsz=imgsz,
-        augment=False,
-        mosaic=0.0,
-        mixup=0.0,
-        copy_paste=0.0,
-        auto_augment=None,
-        erasing=0.0,
-        hsv_h=0.0,
-        hsv_s=0.0,
-        hsv_v=0.0,
-        translate=0.0,
-        scale=0.0,
-        fliplr=0.0,
-        flipud=0.0,
-        project=trial_folder,
-        name="finetune",
-        cls=0.75
-    )
-
-    trained_model_path = os.path.join(trial_folder, "finetune", "weights", "last.pt")
-    trained_model = YOLO(trained_model_path)
-
-    cm, macro_f1, cls_list = evaluate_yolo_classification(trained_model, test_dir)
-
-    print(f"\n=== Trial {trial_id} Completed ===")
-    print("Macro F1:", macro_f1)
-    print("Confusion Matrix:\n", cm)
-    print("Class List:\n", cls_list)
-
-    notif(timer=timer, macro_f1=macro_f1, hyperparams=cm)
-    return macro_f1, trial_folder
-
-
-def main():
-    base_model_path = r"yolo11x-cls.pt"
-    train_data_path = "../root/augmented_balanced_dataset2"
-    test_dir = r"../root/augmented_balanced_dataset2/test"
-
-    best_f1 = -1
-    best_folder = None
-
-    imgsz = [320]
-
-    try:
-        for trial, data in enumerate(imgsz):
-            f1, folder = fine_tune_model(
-                base_model_path,
-                train_data_path,
-                test_dir,
-                trial,
-                data
-            )
-            if f1 > best_f1:
-                best_f1 = f1
-                best_folder = folder
-    except Exception as e:
-        print("ERROR:", e)
-
-    print("=" * 60)
-    print(f"BEST MACRO F1 = {best_f1:.4f}")
-    print(f"BEST MODEL FOLDER = {best_folder}")
-
-
-if __name__ == "__main__":
-    main()
+# ==============================
+# SAVE FINAL MODEL
+# ==============================
+torch.save(model.state_dict(), os.path.join(SAVE_DIR, f"{MODEL_NAME}_final.pth"))
+print("Training complete. Final model saved!")
